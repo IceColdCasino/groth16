@@ -1,0 +1,83 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "curve.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#define V5_WINDOW_SIZE 8
+#define V5_NUM_BUCKETS 256
+#define V5_NUM_WINDOWS 32
+#define V5_THREADS_PER_BUCKET 64
+
+struct MSMConfig {
+    uint num_scalars;
+    uint num_windows;
+    uint window_size;
+    uint n_buckets;
+};
+
+layout(std430, binding = 0) readonly buffer XBuffer { FqElement x_array[]; };
+layout(std430, binding = 1) readonly buffer YBuffer { FqElement y_array[]; };
+layout(std430, binding = 2) readonly buffer NegYBuffer { FqElement neg_y_array[]; };
+layout(std430, binding = 3) readonly buffer ConfigBuffer { MSMConfig config; };
+layout(std430, binding = 4) readonly buffer OffsetsBuffer { uint bucket_offsets[]; };
+layout(std430, binding = 5) readonly buffer IndicesBuffer { uint sorted_indices[]; };
+layout(std430, binding = 6) buffer SumsBuffer { G1Point bucket_sums[]; };
+
+shared G1Point local_sums[V5_THREADS_PER_BUCKET];
+
+void main() {
+    uint num_buckets = V5_NUM_BUCKETS;
+    uint total_buckets = V5_NUM_WINDOWS * num_buckets;
+    uint threads_per_bucket = V5_THREADS_PER_BUCKET;
+
+    uint global_tid = gl_GlobalInvocationID.x;
+    if (global_tid >= total_buckets * threads_per_bucket) return;
+
+    uint window = global_tid / (num_buckets * threads_per_bucket);
+    uint bucket = (global_tid / threads_per_bucket) % num_buckets;
+    uint local_tid = global_tid % threads_per_bucket;
+
+    uint offset = bucket_offsets[window * (num_buckets + 1) + bucket];
+    uint count  = bucket_offsets[window * (num_buckets + 1) + bucket + 1] - offset;
+
+    G1Point sum = g1_zero();
+
+    for (uint i = local_tid; i < count; i += threads_per_bucket) {
+        uint point_idx = sorted_indices[offset + i];
+        G1PointAffine pt;
+        pt.x = x_array[point_idx];
+        pt.y = (bucket < 128) ? y_array[point_idx] : neg_y_array[point_idx];
+        sum = g1_add_affine(sum, pt);
+    }
+
+    local_sums[local_tid] = sum;
+    barrier();
+
+    if (local_tid < 32) {
+        local_sums[local_tid] = g1_add(local_sums[local_tid], local_sums[local_tid + 32]);
+    }
+    barrier();
+    if (local_tid < 16) {
+        local_sums[local_tid] = g1_add(local_sums[local_tid], local_sums[local_tid + 16]);
+    }
+    barrier();
+    if (local_tid < 8) {
+        local_sums[local_tid] = g1_add(local_sums[local_tid], local_sums[local_tid + 8]);
+    }
+    barrier();
+    if (local_tid < 4) {
+        local_sums[local_tid] = g1_add(local_sums[local_tid], local_sums[local_tid + 4]);
+    }
+    barrier();
+    if (local_tid < 2) {
+        local_sums[local_tid] = g1_add(local_sums[local_tid], local_sums[local_tid + 2]);
+    }
+    barrier();
+    if (local_tid == 0) {
+        G1Point total = g1_add(local_sums[0], local_sums[1]);
+        bucket_sums[window * num_buckets + bucket] = total;
+    }
+}

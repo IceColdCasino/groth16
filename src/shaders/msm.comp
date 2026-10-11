@@ -1,0 +1,100 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "curve.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// ============================================================================
+// G1 Multi-Scalar Multiplication (MSM) Kernel
+// ============================================================================
+// Pippenger-style windowed MSM over BN254 G1.
+// Each thread processes one scalar window, accumulating points into buckets.
+// Bucket aggregation is done in the same kernel via a reverse running sum.
+// ============================================================================
+
+struct MSMConfig {
+    uint num_scalars;
+    uint window_size;
+    uint num_windows;
+    uint _pad;
+};
+
+// ---------------------------------------------------------------------------
+// Helper: extract window_size bits starting at window_offset from a 256-bit
+// scalar (4 x uint64_t little-endian limbs).
+// ---------------------------------------------------------------------------
+uint extract_scalar_window(FrElement scalar, uint window_offset, uint window_size) {
+    uint limb_idx = window_offset / 64u;
+    uint bit_idx  = window_offset % 64u;
+    uint64_t val  = 0UL;
+
+    if (bit_idx + window_size <= 64u) {
+        val = scalar.v[limb_idx] >> bit_idx;
+    } else {
+        uint64_t low  = scalar.v[limb_idx] >> bit_idx;
+        uint next_limb = limb_idx + 1u;
+        uint64_t high = 0UL;
+        if (next_limb < 4u) {
+            uint high_bits = bit_idx + window_size - 64u;
+            uint64_t high_mask = (1UL << high_bits) - 1UL;
+            high = (scalar.v[next_limb] & high_mask) << (64u - bit_idx);
+        }
+        val = low | high;
+    }
+
+    uint64_t mask = (1UL << window_size) - 1UL;
+    return uint(val & mask);
+}
+
+// ---------------------------------------------------------------------------
+// msm_g1 — one thread per window
+// ---------------------------------------------------------------------------
+
+layout(std430, binding = 0) readonly buffer ScalarsBuffer { FrElement scalars[]; };
+layout(std430, binding = 1) readonly buffer PointsBuffer { G1PointAffine points[]; };
+layout(std430, binding = 2) readonly buffer ConfigBuffer { MSMConfig config; };
+layout(std430, binding = 3) buffer BucketsBuffer { G1Point buckets[]; };
+layout(std430, binding = 4) writeonly buffer ResultBuffer { G1Point result[]; };
+
+void main() {
+    uint tid = gl_GlobalInvocationID.x;
+    uint num_scalars = config.num_scalars;
+    uint window_size = config.window_size;
+    uint num_windows = config.num_windows;
+
+    // One thread per window
+    if (tid >= num_windows) return;
+
+    uint window_idx    = tid;
+    uint bucket_mask   = (1u << window_size) - 1u;
+    uint num_buckets   = bucket_mask;
+    uint bucket_base   = window_idx * num_buckets;
+    uint window_offset = window_idx * window_size;
+
+    // --- 1. Clear buckets for this window ---
+    for (uint b = 0u; b < num_buckets; b++) {
+        buckets[bucket_base + b] = g1_zero();
+    }
+
+    // --- 2. Accumulate points into buckets ---
+    for (uint i = 0u; i < num_scalars; i++) {
+        uint scalar_window = extract_scalar_window(scalars[i], window_offset, window_size);
+        if (scalar_window != 0u) {
+            uint bucket_idx = scalar_window - 1u;
+            G1Point pt = g1_affine_to_projective(points[i]);
+            buckets[bucket_base + bucket_idx] = g1_add(buckets[bucket_base + bucket_idx], pt);
+        }
+    }
+
+    // --- 3. Bucket aggregation (reverse running sum) ---
+    G1Point window_sum = g1_zero();
+    G1Point running    = g1_zero();
+    for (int b = int(num_buckets) - 1; b >= 0; b--) {
+        running    = g1_add(running, buckets[bucket_base + uint(b)]);
+        window_sum = g1_add(window_sum, running);
+    }
+
+    result[window_idx] = window_sum;
+}

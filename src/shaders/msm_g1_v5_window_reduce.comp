@@ -1,0 +1,37 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "curve.glsl"
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+#define V5_NUM_WINDOWS 32
+#define V5_NUM_BUCKETS 256
+
+layout(std430, binding = 0) readonly buffer SumsBuffer { G1Point bucket_sums[]; };
+layout(std430, binding = 1) writeonly buffer ResultBuffer { G1Point result[]; };
+
+void main() {
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= V5_NUM_WINDOWS) return;
+
+    uint window = tid;
+    uint num_buckets = V5_NUM_BUCKETS;
+
+    G1Point pos_running = g1_zero();
+    G1Point pos_sum = g1_zero();
+    for (int b = 127; b >= 0; b--) {
+        pos_running = g1_add(pos_running, bucket_sums[window * num_buckets + b]);
+        pos_sum = g1_add(pos_sum, pos_running);
+    }
+
+    G1Point neg_running = g1_zero();
+    G1Point neg_sum = g1_zero();
+    for (int b = 255; b >= 128; b--) {
+        neg_running = g1_add(neg_running, bucket_sums[window * num_buckets + b]);
+        neg_sum = g1_add(neg_sum, neg_running);
+    }
+
+    result[window] = g1_add(pos_sum, neg_sum);
+}

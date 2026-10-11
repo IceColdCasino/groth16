@@ -1,0 +1,28 @@
+.{
+    .name = .prover,
+    .version = "0.1.0",
+    .fingerprint = 0xac4a6388b0b35515,
+    .minimum_zig_version = "0.15.2",
+
+    .dependencies = .{
+        .e_jerk_gpu = .{
+            .url = "git+https://github.com/e-jerk/gpu.git#main",
+            .hash = "e_jerk_gpu-0.1.0-FyPePKPvAADeXuFMrSyiV7bHWtc_egPaWgQycLUThwH5",
+        },
+        .zig_metal = .{
+            .url = "git+https://github.com/binoculars/zig-metal#main",
+            .hash = "N-V-__8AAPisPgBOnobLBlpfNHrw9K83kxf1I1S98aQ5-A1c",
+        },
+        .rapidsnark = .{
+            .url = "git+https://github.com/iden3/rapidsnark.git#main",
+            .hash = "N-V-__8AAD25GwArSiaE-omcpeLIQWF1DUW1MHXoi6bFKSkD",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tests",
+        "benchmarks",
+    },
+}

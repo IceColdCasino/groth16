@@ -1,0 +1,101 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "field.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// ============================================================================
+// BN254 Fr FFT Kernel (Cooley-Tukey, iterative, in-place)
+// ============================================================================
+// One dispatch per stage. The host calls:
+//   stage 0          : bit-reverse permutation
+//   stage 1 .. log_n : butterfly stage s
+// For inverse FFT, stage == log_n also normalizes by inverse_n.
+// Twiddles are precomputed for all n/2 unique factors.
+// ============================================================================
+
+struct FFTConfig {
+    uint n;
+    uint inverse;
+    uint log_n;
+    uint stage;
+    uint num_threads;
+};
+
+// ---------------------------------------------------------------------------
+// Bit-reverse an index in log_n bits
+// ---------------------------------------------------------------------------
+
+uint bit_reverse(uint x, uint log_n) {
+    uint r = 0u;
+    for (uint i = 0u; i < log_n; i++) {
+        r = (r << 1u) | ((x >> i) & 1u);
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// fft_fr — in-place single-stage FFT kernel
+// ---------------------------------------------------------------------------
+
+layout(std430, binding = 0) buffer DataBuffer { FrElement data[]; };
+layout(std430, binding = 1) readonly buffer TwiddlesBuffer { FrElement twiddles[]; };
+layout(std430, binding = 2) readonly buffer ConfigBuffer { FFTConfig config; };
+layout(std430, binding = 3) readonly buffer InverseNBuffer { FrElement inverse_n; };
+
+void main() {
+    uint tid = gl_GlobalInvocationID.x;
+    uint n = config.n;
+    uint stage = config.stage;
+    uint log_n = config.log_n;
+    uint num_threads = config.num_threads;
+
+    // Stage 0: bit-reverse permutation
+    if (stage == 0u) {
+        uint chunk = (n + num_threads - 1u) / num_threads;
+        uint start = tid * chunk;
+        uint end = min(start + chunk, n);
+
+        for (uint i = start; i < end; i++) {
+            uint j = bit_reverse(i, log_n);
+            if (i < j) {
+                FrElement tmp = data[i];
+                data[i] = data[j];
+                data[j] = tmp;
+            }
+        }
+        return;
+    }
+
+    // Butterfly stages 1 .. log_n
+    uint half_m = 1u << (stage - 1u);
+    uint m = half_m << 1u;
+    uint total_butterflies = n >> 1u;
+    uint chunk = (total_butterflies + num_threads - 1u) / num_threads;
+    uint start = tid * chunk;
+    uint end = min(start + chunk, total_butterflies);
+
+    uint twiddle_step = n >> stage;
+
+    bool is_last_inverse = (config.inverse != 0u) && (stage == log_n);
+
+    for (uint b = start; b < end; b++) {
+        uint group = b >> (stage - 1u);
+        uint offset = b & (half_m - 1u);
+        uint i = (group * m) + offset;
+        uint j = i + half_m;
+        uint twiddle_idx = offset * twiddle_step;
+
+        FrElement u = data[i];
+        FrElement v = fr_mul(data[j], twiddles[twiddle_idx]);
+        data[i] = fr_add(u, v);
+        data[j] = fr_sub(u, v);
+
+        if (is_last_inverse) {
+            data[i] = fr_mul(data[i], inverse_n);
+            data[j] = fr_mul(data[j], inverse_n);
+        }
+    }
+}

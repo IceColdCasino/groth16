@@ -1,0 +1,115 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "curve.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#define G2_V6_THREADS_PER_BUCKET 64
+
+struct MSMConfig {
+    uint num_scalars;
+    uint num_windows;
+    uint window_size;
+    uint n_buckets;
+};
+
+layout(std430, binding = 0) readonly buffer XC0Buffer { FqElement x_c0[]; };
+layout(std430, binding = 1) readonly buffer XC1Buffer { FqElement x_c1[]; };
+layout(std430, binding = 2) readonly buffer YC0Buffer { FqElement y_c0[]; };
+layout(std430, binding = 3) readonly buffer YC1Buffer { FqElement y_c1[]; };
+layout(std430, binding = 4) readonly buffer ConfigBuffer { MSMConfig config; };
+layout(std430, binding = 5) readonly buffer OffsetsBuffer { uint bucket_offsets[]; };
+layout(std430, binding = 6) readonly buffer IndicesBuffer { uint sorted_indices[]; };
+layout(std430, binding = 7) buffer SumsBuffer { G2Point bucket_sums[]; };
+layout(std430, binding = 8) readonly buffer NegYC0Buffer { FqElement neg_y_c0[]; };
+layout(std430, binding = 9) readonly buffer NegYC1Buffer { FqElement neg_y_c1[]; };
+
+shared G2Point local_sums[G2_V6_THREADS_PER_BUCKET];
+
+void main() {
+    uint num_windows = config.num_windows;
+    uint window_size = config.window_size;
+    uint num_buckets = 1u << window_size;
+    uint threads_per_bucket = G2_V6_THREADS_PER_BUCKET;
+    uint total_buckets = num_windows * num_buckets;
+
+    uint global_tid = gl_GlobalInvocationID.x;
+    if (global_tid >= total_buckets * threads_per_bucket) return;
+
+    uint window = global_tid / (num_buckets * threads_per_bucket);
+    uint bucket = (global_tid / threads_per_bucket) % num_buckets;
+    uint local_tid = global_tid % threads_per_bucket;
+
+    uint offset = bucket_offsets[window * (num_buckets + 1) + bucket];
+    uint count  = bucket_offsets[window * (num_buckets + 1) + bucket + 1] - offset;
+
+    G2Point sum;
+    g2_zero(sum);
+
+    for (uint i = local_tid; i < count; i += threads_per_bucket) {
+        uint point_idx = sorted_indices[offset + i];
+        G2PointAffine pt_affine;
+        pt_affine.x.a = x_c0[point_idx];
+        pt_affine.x.b = x_c1[point_idx];
+        pt_affine.y.a = (bucket < 128) ? y_c0[point_idx] : neg_y_c0[point_idx];
+        pt_affine.y.b = (bucket < 128) ? y_c1[point_idx] : neg_y_c1[point_idx];
+        G2Point pt;
+        g2_affine_to_projective(pt_affine, pt);
+        G2Point add_result;
+        g2_add(sum, pt, add_result);
+        sum = add_result;
+    }
+
+    local_sums[local_tid] = sum;
+    barrier();
+
+    if (local_tid < 32) {
+        G2Point a = local_sums[local_tid];
+        G2Point b = local_sums[local_tid + 32];
+        G2Point add_result;
+        g2_add(a, b, add_result);
+        local_sums[local_tid] = add_result;
+    }
+    barrier();
+    if (local_tid < 16) {
+        G2Point a = local_sums[local_tid];
+        G2Point b = local_sums[local_tid + 16];
+        G2Point add_result;
+        g2_add(a, b, add_result);
+        local_sums[local_tid] = add_result;
+    }
+    barrier();
+    if (local_tid < 8) {
+        G2Point a = local_sums[local_tid];
+        G2Point b = local_sums[local_tid + 8];
+        G2Point add_result;
+        g2_add(a, b, add_result);
+        local_sums[local_tid] = add_result;
+    }
+    barrier();
+    if (local_tid < 4) {
+        G2Point a = local_sums[local_tid];
+        G2Point b = local_sums[local_tid + 4];
+        G2Point add_result;
+        g2_add(a, b, add_result);
+        local_sums[local_tid] = add_result;
+    }
+    barrier();
+    if (local_tid < 2) {
+        G2Point a = local_sums[local_tid];
+        G2Point b = local_sums[local_tid + 2];
+        G2Point add_result;
+        g2_add(a, b, add_result);
+        local_sums[local_tid] = add_result;
+    }
+    barrier();
+    if (local_tid == 0) {
+        G2Point a = local_sums[0];
+        G2Point b = local_sums[1];
+        G2Point add_result;
+        g2_add(a, b, add_result);
+        bucket_sums[window * num_buckets + bucket] = add_result;
+    }
+}

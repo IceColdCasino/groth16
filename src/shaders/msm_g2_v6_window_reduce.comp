@@ -1,0 +1,58 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "curve.glsl"
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+struct MSMConfig {
+    uint num_scalars;
+    uint num_windows;
+    uint window_size;
+    uint n_buckets;
+};
+
+layout(std430, binding = 0) readonly buffer SumsBuffer { G2Point bucket_sums[]; };
+layout(std430, binding = 1) readonly buffer ConfigBuffer { MSMConfig config; };
+layout(std430, binding = 2) writeonly buffer ResultBuffer { G2Point result[]; };
+
+void main() {
+    uint num_windows = config.num_windows;
+    uint num_buckets = 1u << config.window_size;
+
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= num_windows) return;
+
+    uint window = tid;
+
+    G2Point pos_running;
+    g2_zero(pos_running);
+    G2Point pos_sum;
+    g2_zero(pos_sum);
+    for (int b = 127; b >= 0; b--) {
+        G2Point bucket_val = bucket_sums[window * num_buckets + b];
+        G2Point add_result;
+        g2_add(pos_running, bucket_val, add_result);
+        pos_running = add_result;
+        g2_add(pos_sum, pos_running, add_result);
+        pos_sum = add_result;
+    }
+
+    G2Point neg_running;
+    g2_zero(neg_running);
+    G2Point neg_sum;
+    g2_zero(neg_sum);
+    for (int b = 255; b >= 128; b--) {
+        G2Point bucket_val = bucket_sums[window * num_buckets + b];
+        G2Point add_result;
+        g2_add(neg_running, bucket_val, add_result);
+        neg_running = add_result;
+        g2_add(neg_sum, neg_running, add_result);
+        neg_sum = add_result;
+    }
+
+    G2Point final_result;
+    g2_add(pos_sum, neg_sum, final_result);
+    result[window] = final_result;
+}
