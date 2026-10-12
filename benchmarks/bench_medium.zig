@@ -1,9 +1,6 @@
 const std = @import("std");
 const cpu = @import("cpu");
-const c = @cImport({
-    @cInclude("sys/time.h");
-    @cInclude("stdlib.h");
-});
+const c = @import("c");
 
 const ZKEY_PATH = "benchmarks/circuits/medium/circuit_final.zkey";
 const WTNS_PATH = "benchmarks/circuits/medium/witness.wtns";

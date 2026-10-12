@@ -1,9 +1,7 @@
 const std = @import("std");
 const cpu = @import("cpu");
 const gpu = @import("gpu");
-const c = @cImport({
-    @cInclude("stdio.h");
-});
+const c = @import("c");
 
 const PROVER_OK = 0x0;
 const PROVER_ERROR = 0x1;
@@ -22,7 +20,7 @@ fn makeTempPath(prefix: []const u8) ![]u8 {
 /// Write buffer to temporary file using C stdio.
 /// Handles partial writes for very large buffers (>2GB not supported by single fwrite on some platforms).
 fn writeBufferToTempFile(tmp_path: []const u8, buffer: []const u8) !void {
-    const path_z = try std.heap.c_allocator.dupeZ(u8, tmp_path);
+    const path_z = try std.heap.c_allocator.dupeSentinel(u8, tmp_path, 0);
     defer std.heap.c_allocator.free(path_z);
     const file = c.fopen(path_z.ptr, "wb");
     if (file == null) return error.FileNotFound;
@@ -64,7 +62,7 @@ export fn groth16_prover_zkey_file(
         }
         return PROVER_ERROR;
     };
-    defer std.heap.c_allocator.free(zkey_data);
+    // groth16_prover consumes this malloc.
     return groth16_prover(
         zkey_data.ptr,
         zkey_data.len,
@@ -93,7 +91,12 @@ export fn groth16_prover(
 ) c_int {
     var prover: *anyopaque = undefined;
     var err = groth16_prover_create(&prover, zkey_buffer, zkey_size, error_msg, error_msg_maxsize);
-    if (err != PROVER_OK) return err;
+    if (err != PROVER_OK) {
+        // One-shot entry point consumes the malloc whether create succeeds or not.
+        const owned = @as([*]const u8, @ptrCast(zkey_buffer))[0..zkey_size];
+        std.heap.c_allocator.free(owned);
+        return err;
+    }
     err = groth16_prover_prove(
         prover,
         wtns_buffer,
@@ -109,28 +112,34 @@ export fn groth16_prover(
     return err;
 }
 
+const VERIFIER_VALID_PROOF: c_int = 0;
+const VERIFIER_INVALID_PROOF: c_int = 1;
+const VERIFIER_ERROR: c_int = 2;
+
+/// `proof`, `inputs`, and `verification_key` are null-terminated JSON strings.
 export fn groth16_verify(
-    vk_buffer: *const anyopaque,
-    vk_size: c_ulonglong,
-    proof_buffer: *const anyopaque,
-    proof_size: c_ulonglong,
-    public_buffer: *const anyopaque,
-    public_size: c_ulonglong,
+    proof: [*:0]const u8,
+    inputs: [*:0]const u8,
+    verification_key: [*:0]const u8,
     error_msg: [*c]u8,
-    error_msg_maxsize: c_ulonglong,
+    error_msg_maxsize: c_ulong,
 ) c_int {
-    const vk_slice = @as([*]const u8, @ptrCast(vk_buffer))[0..vk_size];
-    const proof_slice = @as([*]const u8, @ptrCast(proof_buffer))[0..proof_size];
-    const public_slice = @as([*]const u8, @ptrCast(public_buffer))[0..public_size];
+    const proof_slice = std.mem.span(proof);
+    const public_slice = std.mem.span(inputs);
+    const vk_slice = std.mem.span(verification_key);
 
     const result = cpu.verify(vk_slice, proof_slice, public_slice) catch |err| {
         if (error_msg_maxsize > 0) {
             _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Verification failed: {}", .{err}) catch {};
         }
-        return PROVER_ERROR;
+        return VERIFIER_ERROR;
     };
 
-    if (result) return PROVER_OK else return PROVER_ERROR;
+    if (result) return VERIFIER_VALID_PROOF;
+    if (error_msg_maxsize > 0) {
+        _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "invalid proof", .{}) catch {};
+    }
+    return VERIFIER_INVALID_PROOF;
 }
 
 export fn groth16_proof_size(proof_size: *c_ulonglong) void {
@@ -218,14 +227,9 @@ export fn groth16_prover_create(
         return PROVER_ERROR;
     };
 
+    // Caller malloc. groth16_prover_destroy frees it. A failed create leaves it with the caller.
     obj.* = .{
-        .zkey_data = std.heap.c_allocator.dupe(u8, zkey_slice) catch |err| {
-            std.heap.c_allocator.destroy(obj);
-            if (error_msg_maxsize > 0) {
-                _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Out of memory: {}", .{err}) catch {};
-            }
-            return PROVER_ERROR;
-        },
+        .zkey_data = zkey_slice,
         .nVars = zkey.header.nVars,
         .nPublic = zkey.header.nPublic,
         .domainSize = zkey.header.domainSize,
@@ -249,8 +253,9 @@ export fn groth16_prover_create_zkey_file(
         }
         return PROVER_ERROR;
     };
-    defer std.heap.c_allocator.free(zkey_data);
-    return groth16_prover_create(prover_object, zkey_data.ptr, zkey_data.len, error_msg, error_msg_maxsize);
+    const rc = groth16_prover_create(prover_object, zkey_data.ptr, zkey_data.len, error_msg, error_msg_maxsize);
+    if (rc != PROVER_OK) std.heap.c_allocator.free(zkey_data);
+    return rc;
 }
 
 export fn groth16_prover_destroy(prover_object: ?*anyopaque) void {
@@ -309,7 +314,7 @@ export fn groth16_prover_prove(
     }
 
     // Write witness to unique temp file
-    const witness_tmp = makeTempPath("rs_wtns") catch |err| {
+    const witness_tmp = makeTempPath("wtns") catch |err| {
         if (error_msg_maxsize > 0) {
             _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Failed to create temp path: {}", .{err}) catch {};
         }
@@ -327,7 +332,7 @@ export fn groth16_prover_prove(
     };
 
     // Write zkey to unique temp file (proveOnGpu needs file path)
-    const zkey_tmp = makeTempPath("rs_zkey") catch |err| {
+    const zkey_tmp = makeTempPath("zkey") catch |err| {
         if (error_msg_maxsize > 0) {
             _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Failed to create temp path: {}", .{err}) catch {};
         }

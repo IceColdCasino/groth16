@@ -1,16 +1,13 @@
 const std = @import("std");
 const cpu = @import("cpu");
 const gpu = @import("gpu");
-const c = @cImport({
-    @cInclude("stdio.h");
-    @cInclude("sys/time.h");
-});
+const c = @import("c");
 
 const usage =
     \\Usage: prover <zkey_file> <witness_file> [output_proof.json] [output_public.json]
     \\
     \\Options:
-    \\  --cpu          Use CPU backend (rapidsnark)
+    \\  --cpu          Use the Zig CPU backend
     \\  --metal        Use Metal GPU backend
     \\  --gpu          Auto-select best GPU (Metal on macOS)
     \\  -V, --verbose  Show timing information
@@ -19,7 +16,7 @@ const usage =
 ;
 
 fn writeFile(path: []const u8, data: []const u8) !void {
-    const path_z = try std.heap.c_allocator.dupeZ(u8, path);
+    const path_z = try std.heap.c_allocator.dupeSentinel(u8, path, 0);
     defer std.heap.c_allocator.free(path_z);
     const file = c.fopen(path_z.ptr, "w");
     if (file == null) return error.FileNotFound;

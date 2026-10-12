@@ -1,8 +1,37 @@
 const std = @import("std");
 
+fn moltenVkRoot() []const u8 {
+    const candidates = [_][:0]const u8{
+        "/opt/homebrew/opt/molten-vk",
+        "/usr/local/opt/molten-vk",
+    };
+    for (candidates) |root| {
+        if (std.c.access(root.ptr, 0) == 0) return root;
+    }
+    return candidates[0];
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const molten_vk_root = moltenVkRoot();
+    const molten_vk_lib = b.fmt("{s}/lib", .{molten_vk_root});
+    const molten_vk_include = b.fmt("{s}/libexec/include", .{molten_vk_root});
+
+    const host_c = b.addTranslateC(.{
+        .root_source_file = b.path("include/host.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const c_module = host_c.createModule();
+
+    const vk_c = b.addTranslateC(.{
+        .root_source_file = b.path("include/vulkan_import.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    vk_c.addIncludePath(.{ .cwd_relative = molten_vk_include });
+    const vk_module = vk_c.createModule();
     const is_macos = target.result.os.tag == .macos;
     const is_native = target.result.os.tag == @import("builtin").os.tag;
 
@@ -16,15 +45,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = zig_metal_dep.path("src/main.zig"),
     });
 
-    // rapidsnark dependency (C++ prover + testdata)
-    const rapidsnark_dep = b.dependency("rapidsnark", .{});
-
     const cpu_module = b.createModule(.{
         .root_source_file = b.path("src/cpu.zig"),
         .target = target,
         .optimize = optimize,
     });
     cpu_module.link_libc = true;
+    cpu_module.addImport("c", c_module);
 
     // Metal shader preprocessing (macOS only)
     var metal_shader_module: ?*std.Build.Module = null;
@@ -35,13 +62,13 @@ pub fn build(b: *std.Build) void {
             \\grep -v '#include "field.metal"' "$1" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"' && grep -v '#include "field.metal"' "$2" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"' && grep -v '#include "field.metal"' "$3" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"' && grep -v '#include "field.metal"' "$4" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"' && grep -v '#include "field.metal"' "$5" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"' && grep -v '#include "field.metal"' "$6" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"' && grep -v '#include "field.metal"' "$7" | grep -v '#include "curve.metal"' | grep -v '#include "field_simd.metal"'
             , "--",
         });
-        metal_preprocess.addFileArg(b.path("src/shaders/field.metal"));
-        metal_preprocess.addFileArg(b.path("src/shaders/field_simd.metal"));
-        metal_preprocess.addFileArg(b.path("src/shaders/curve.metal"));
-        metal_preprocess.addFileArg(b.path("src/shaders/msm.metal"));
-        metal_preprocess.addFileArg(b.path("src/shaders/fft.metal"));
-        metal_preprocess.addFileArg(b.path("src/shaders/fft_tile.metal"));
-        metal_preprocess.addFileArg(b.path("src/shaders/fft_4step.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/field.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/field_simd.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/curve.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/msm.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/fft.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/fft_tile.metal"));
+        metal_preprocess.addFileArg(b.path("src/shaders/metal/fft_4step.metal"));
         const preprocessed_metal = metal_preprocess.captureStdOut(.{});
 
         const write_files = b.addWriteFiles();
@@ -67,33 +94,33 @@ pub fn build(b: *std.Build) void {
     // SPIR-V shader compilation (Vulkan compute backend)
     const spirv_msm_g1_br = b.addSystemCommand(&.{
         "glslangValidator", "-V", "--target-env", "vulkan1.2",
-        "-Isrc/shaders",
+        "-Isrc/shaders/spirv",
     });
-    spirv_msm_g1_br.addFileArg(b.path("src/shaders/msm_g1_v5_bucket_reduce.comp"));
+    spirv_msm_g1_br.addFileArg(b.path("src/shaders/spirv/msm_g1_v5_bucket_reduce.comp"));
     spirv_msm_g1_br.addArg("-o");
     const spirv_msm_g1_br_out = spirv_msm_g1_br.addOutputFileArg("msm_g1_v5_bucket_reduce.spv");
 
     const spirv_msm_g1_wr = b.addSystemCommand(&.{
         "glslangValidator", "-V", "--target-env", "vulkan1.2",
-        "-Isrc/shaders",
+        "-Isrc/shaders/spirv",
     });
-    spirv_msm_g1_wr.addFileArg(b.path("src/shaders/msm_g1_v5_window_reduce.comp"));
+    spirv_msm_g1_wr.addFileArg(b.path("src/shaders/spirv/msm_g1_v5_window_reduce.comp"));
     spirv_msm_g1_wr.addArg("-o");
     const spirv_msm_g1_wr_out = spirv_msm_g1_wr.addOutputFileArg("msm_g1_v5_window_reduce.spv");
 
     const spirv_msm_g2_br = b.addSystemCommand(&.{
         "glslangValidator", "-V", "--target-env", "vulkan1.2",
-        "-Isrc/shaders",
+        "-Isrc/shaders/spirv",
     });
-    spirv_msm_g2_br.addFileArg(b.path("src/shaders/msm_g2_v6_bucket_reduce.comp"));
+    spirv_msm_g2_br.addFileArg(b.path("src/shaders/spirv/msm_g2_v6_bucket_reduce.comp"));
     spirv_msm_g2_br.addArg("-o");
     const spirv_msm_g2_br_out = spirv_msm_g2_br.addOutputFileArg("msm_g2_v6_bucket_reduce.spv");
 
     const spirv_msm_g2_wr = b.addSystemCommand(&.{
         "glslangValidator", "-V", "--target-env", "vulkan1.2",
-        "-Isrc/shaders",
+        "-Isrc/shaders/spirv",
     });
-    spirv_msm_g2_wr.addFileArg(b.path("src/shaders/msm_g2_v6_window_reduce.comp"));
+    spirv_msm_g2_wr.addFileArg(b.path("src/shaders/spirv/msm_g2_v6_window_reduce.comp"));
     spirv_msm_g2_wr.addArg("-o");
     const spirv_msm_g2_wr_out = spirv_msm_g2_wr.addOutputFileArg("msm_g2_v6_window_reduce.spv");
 
@@ -117,42 +144,30 @@ pub fn build(b: *std.Build) void {
     spirv_module.addAnonymousImport("msm_g2_v6_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g2_br_spv });
     spirv_module.addAnonymousImport("msm_g2_v6_window_reduce.spv", .{ .root_source_file = spirv_msm_g2_wr_spv });
 
-    // Generate rapidsnark testdata module from upstream dependency
-    const write_testdata = b.addWriteFiles();
-    const zkey_file = write_testdata.addCopyFile(rapidsnark_dep.path("testdata/circuit_final.zkey"), "circuit_final.zkey");
-    const wtns_file = write_testdata.addCopyFile(rapidsnark_dep.path("testdata/witness.wtns"), "witness.wtns");
-    const vk_file = write_testdata.addCopyFile(rapidsnark_dep.path("testdata/verification_key.json"), "verification_key.json");
-    const testdata_zig = write_testdata.add("testdata.zig",
-        \\pub const ZKEY = @embedFile("circuit_final.zkey");
-        \\pub const WTNS = @embedFile("witness.wtns");
-        \\pub const VK = @embedFile("verification_key.json");
-        \\
-    );
-    const testdata_module = b.addModule("rapidsnark_testdata", .{
-        .root_source_file = testdata_zig,
+    const testdata_module = b.addModule("testdata", .{
+        .root_source_file = b.path("testdata/testdata.zig"),
     });
-    testdata_module.addAnonymousImport("circuit_final.zkey", .{ .root_source_file = zkey_file });
-    testdata_module.addAnonymousImport("witness.wtns", .{ .root_source_file = wtns_file });
-    testdata_module.addAnonymousImport("verification_key.json", .{ .root_source_file = vk_file });
-    cpu_module.addImport("rapidsnark_testdata", testdata_module);
+    cpu_module.addImport("testdata", testdata_module);
 
     const gpu_module = b.createModule(.{
         .root_source_file = b.path("src/gpu/mod.zig"),
         .target = target,
         .optimize = optimize,
     });
+    gpu_module.addImport("c", c_module);
+    gpu_module.addImport("vk", vk_module);
     gpu_module.addImport("e_jerk_gpu", e_jerk_gpu_module);
     gpu_module.addImport("zig-metal", zig_metal_module);
     gpu_module.addImport("cpu", cpu_module);
     gpu_module.addImport("spirv", spirv_module);
-    gpu_module.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/molten-vk/1.4.1/libexec/include" });
+    gpu_module.addIncludePath(.{ .cwd_relative = molten_vk_include });
     if (metal_shader_module) |msm| {
         gpu_module.addImport("metal_shader", msm);
     }
 
-    // --- Static Library: librapidsnark.a ---
+    // --- Static Library: libgroth16.a ---
     const lib = b.addLibrary(.{
-        .name = "rapidsnark",
+        .name = "groth16",
         .linkage = .static,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/lib.zig"),
@@ -166,6 +181,7 @@ pub fn build(b: *std.Build) void {
     });
 
     lib.root_module.link_libc = true;
+    lib.root_module.addImport("c", c_module);
 
     if (is_native) {
         if (is_macos) {
@@ -173,7 +189,7 @@ pub fn build(b: *std.Build) void {
             lib.root_module.linkFramework("Metal", .{});
             lib.root_module.linkFramework("QuartzCore", .{});
             // Also link MoltenVK on macOS when building natively
-            lib.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+            lib.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
             lib.root_module.linkSystemLibrary("MoltenVK", .{});
         } else {
             lib.root_module.linkSystemLibrary("pthread", .{});
@@ -182,9 +198,9 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
-    // --- Dynamic Library: librapidsnark.dylib / .so / .dll ---
+    // --- Dynamic Library: libgroth16.dylib / .so / .dll ---
     const dylib = b.addLibrary(.{
-        .name = "rapidsnark",
+        .name = "groth16",
         .linkage = .dynamic,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/lib.zig"),
@@ -198,13 +214,14 @@ pub fn build(b: *std.Build) void {
     });
 
     dylib.root_module.link_libc = true;
+    dylib.root_module.addImport("c", c_module);
 
     if (is_native) {
         if (is_macos) {
             dylib.root_module.linkFramework("Foundation", .{});
             dylib.root_module.linkFramework("Metal", .{});
             dylib.root_module.linkFramework("QuartzCore", .{});
-            dylib.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+            dylib.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
             dylib.root_module.linkSystemLibrary("MoltenVK", .{});
         } else {
             dylib.root_module.linkSystemLibrary("pthread", .{});
@@ -212,9 +229,7 @@ pub fn build(b: *std.Build) void {
     }
 
     b.installArtifact(dylib);
-
-    // Install header alongside dylib
-    b.installFile("../rapidsnark/src/prover.h", "include/prover.h");
+    b.installFile("include/groth16.h", "include/groth16.h");
 
     // --- Executable: prover CLI ---
     const exe = b.addExecutable(.{
@@ -231,6 +246,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.root_module.link_libc = true;
+    exe.root_module.addImport("c", c_module);
 
     if (is_native) {
         if (is_macos) {
@@ -238,7 +254,7 @@ pub fn build(b: *std.Build) void {
             exe.root_module.linkFramework("Metal", .{});
             exe.root_module.linkFramework("QuartzCore", .{});
             // Also link MoltenVK on macOS when building natively
-            exe.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+            exe.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
             exe.root_module.linkSystemLibrary("MoltenVK", .{});
         } else {
             exe.root_module.linkSystemLibrary("pthread", .{});
@@ -247,44 +263,33 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
-    const rapidsnark_test_api_module = b.createModule(.{
-        .root_source_file = b.path("src/rapidsnark_test_api.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "cpu", .module = cpu_module },
-        },
-    });
-
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/rapidsnark_tests.zig"),
+            .root_source_file = b.path("tests/compat_tests.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "cpu", .module = cpu_module },
-                .{ .name = "rapidsnark_test_api", .module = rapidsnark_test_api_module },
-                .{ .name = "rapidsnark_testdata", .module = testdata_module },
+                .{ .name = "testdata", .module = testdata_module },
                 .{ .name = "gpu", .module = gpu_module },
             },
         }),
     });
 
     unit_tests.root_module.link_libc = true;
-    unit_tests.root_module.addObjectFile(b.path("../rapidsnark/zig-out/lib/librapidsnark_test_api.dylib"));
+    unit_tests.root_module.addImport("c", c_module);
 
     if (is_native and is_macos) {
         unit_tests.root_module.linkFramework("Foundation", .{});
         unit_tests.root_module.linkFramework("Metal", .{});
         unit_tests.root_module.linkFramework("QuartzCore", .{});
-        unit_tests.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        unit_tests.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         unit_tests.root_module.linkSystemLibrary("MoltenVK", .{});
     }
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
-    test_step.dependOn(&write_testdata.step);
     if (metal_check_step) |check| {
         test_step.dependOn(check);
     }
@@ -293,12 +298,16 @@ pub fn build(b: *std.Build) void {
     const msm_debug = b.addExecutable(.{
         .name = "msm-debug",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/msm_debug.zig"),
+            .root_source_file = b.path("tools/msm_debug.zig"),
             .target = target,
             .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "cpu", .module = cpu_module },
+            },
         }),
     });
     msm_debug.root_module.link_libc = true;
+    msm_debug.root_module.addImport("c", c_module);
     b.installArtifact(msm_debug);
 
     const bench = b.addExecutable(.{
@@ -310,17 +319,18 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "cpu", .module = cpu_module },
                 .{ .name = "gpu", .module = gpu_module },
-                .{ .name = "rapidsnark_testdata", .module = testdata_module },
+                .{ .name = "testdata", .module = testdata_module },
             },
         }),
     });
 
     bench.root_module.link_libc = true;
+    bench.root_module.addImport("c", c_module);
     if (is_native and is_macos) {
         bench.root_module.linkFramework("Foundation", .{});
         bench.root_module.linkFramework("Metal", .{});
         bench.root_module.linkFramework("QuartzCore", .{});
-        bench.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        bench.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         bench.root_module.linkSystemLibrary("MoltenVK", .{});
     }
 
@@ -342,11 +352,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
     bench_medium.root_module.link_libc = true;
+    bench_medium.root_module.addImport("c", c_module);
     if (is_native and is_macos) {
         bench_medium.root_module.linkFramework("Foundation", .{});
         bench_medium.root_module.linkFramework("Metal", .{});
         bench_medium.root_module.linkFramework("QuartzCore", .{});
-        bench_medium.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        bench_medium.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         bench_medium.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     const run_bench_medium = b.addRunArtifact(bench_medium);
@@ -370,13 +381,14 @@ pub fn build(b: *std.Build) void {
             window_preprocess_bench.root_module.linkFramework("Foundation", .{});
             window_preprocess_bench.root_module.linkFramework("Metal", .{});
             window_preprocess_bench.root_module.linkFramework("QuartzCore", .{});
-            window_preprocess_bench.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+            window_preprocess_bench.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
             window_preprocess_bench.root_module.linkSystemLibrary("MoltenVK", .{});
         } else {
             window_preprocess_bench.root_module.linkSystemLibrary("pthread", .{});
         }
     }
     window_preprocess_bench.root_module.link_libc = true;
+    window_preprocess_bench.root_module.addImport("c", c_module);
 
     const run_window_preprocess_bench = b.addRunArtifact(window_preprocess_bench);
     const window_preprocess_bench_step = b.step("window-preprocess-bench", "Run window preprocessing benchmark");
@@ -389,7 +401,7 @@ pub fn build(b: *std.Build) void {
     const metal_fq_mul_test = b.addExecutable(.{
         .name = "test-metal-fq-mul",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/test_metal_fq_mul.zig"),
+            .root_source_file = b.path("tests/metal/test_metal_fq_mul.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -401,7 +413,7 @@ pub fn build(b: *std.Build) void {
         metal_fq_mul_test.root_module.linkFramework("Foundation", .{});
         metal_fq_mul_test.root_module.linkFramework("Metal", .{});
         metal_fq_mul_test.root_module.linkFramework("QuartzCore", .{});
-        metal_fq_mul_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        metal_fq_mul_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         metal_fq_mul_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     metal_fq_mul_test.root_module.link_libc = true;
@@ -411,7 +423,7 @@ pub fn build(b: *std.Build) void {
     const metal_mul128_test = b.addExecutable(.{
         .name = "test-metal-mul128",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/test_metal_mul128.zig"),
+            .root_source_file = b.path("tests/metal/test_metal_mul128.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -423,7 +435,7 @@ pub fn build(b: *std.Build) void {
         metal_mul128_test.root_module.linkFramework("Foundation", .{});
         metal_mul128_test.root_module.linkFramework("Metal", .{});
         metal_mul128_test.root_module.linkFramework("QuartzCore", .{});
-        metal_mul128_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        metal_mul128_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         metal_mul128_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     metal_mul128_test.root_module.link_libc = true;
@@ -433,7 +445,7 @@ pub fn build(b: *std.Build) void {
     const metal_add128_test = b.addExecutable(.{
         .name = "test-metal-add128",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/test_metal_add128.zig"),
+            .root_source_file = b.path("tests/metal/test_metal_add128.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -445,7 +457,7 @@ pub fn build(b: *std.Build) void {
         metal_add128_test.root_module.linkFramework("Foundation", .{});
         metal_add128_test.root_module.linkFramework("Metal", .{});
         metal_add128_test.root_module.linkFramework("QuartzCore", .{});
-        metal_add128_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        metal_add128_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         metal_add128_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     metal_add128_test.root_module.link_libc = true;
@@ -455,7 +467,7 @@ pub fn build(b: *std.Build) void {
     const metal_mul128_direct_test = b.addExecutable(.{
         .name = "test-metal-mul128-direct",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/test_metal_mul128_direct.zig"),
+            .root_source_file = b.path("tests/metal/test_metal_mul128_direct.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -467,7 +479,7 @@ pub fn build(b: *std.Build) void {
         metal_mul128_direct_test.root_module.linkFramework("Foundation", .{});
         metal_mul128_direct_test.root_module.linkFramework("Metal", .{});
         metal_mul128_direct_test.root_module.linkFramework("QuartzCore", .{});
-        metal_mul128_direct_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        metal_mul128_direct_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         metal_mul128_direct_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     metal_mul128_direct_test.root_module.link_libc = true;
@@ -477,7 +489,7 @@ pub fn build(b: *std.Build) void {
     const fft_tile1024_debug_test = b.addExecutable(.{
         .name = "test-fft-tile1024-debug",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_fft_tile1024_debug.zig"),
+            .root_source_file = b.path("tests/fft/tdd_fft_tile1024_debug.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -491,7 +503,7 @@ pub fn build(b: *std.Build) void {
         fft_tile1024_debug_test.root_module.linkFramework("Foundation", .{});
         fft_tile1024_debug_test.root_module.linkFramework("Metal", .{});
         fft_tile1024_debug_test.root_module.linkFramework("QuartzCore", .{});
-        fft_tile1024_debug_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        fft_tile1024_debug_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         fft_tile1024_debug_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     fft_tile1024_debug_test.root_module.link_libc = true;
@@ -501,7 +513,7 @@ pub fn build(b: *std.Build) void {
     const fft_hierarchical_test = b.addExecutable(.{
         .name = "test-fft-hierarchical",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_fft_hierarchical.zig"),
+            .root_source_file = b.path("tests/fft/tdd_fft_hierarchical.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -515,7 +527,7 @@ pub fn build(b: *std.Build) void {
         fft_hierarchical_test.root_module.linkFramework("Foundation", .{});
         fft_hierarchical_test.root_module.linkFramework("Metal", .{});
         fft_hierarchical_test.root_module.linkFramework("QuartzCore", .{});
-        fft_hierarchical_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        fft_hierarchical_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         fft_hierarchical_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     fft_hierarchical_test.root_module.link_libc = true;
@@ -525,7 +537,7 @@ pub fn build(b: *std.Build) void {
     const fft_global_stage_test = b.addExecutable(.{
         .name = "test-fft-global-stage",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_fft_global_stage.zig"),
+            .root_source_file = b.path("tests/fft/tdd_fft_global_stage.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -539,7 +551,7 @@ pub fn build(b: *std.Build) void {
         fft_global_stage_test.root_module.linkFramework("Foundation", .{});
         fft_global_stage_test.root_module.linkFramework("Metal", .{});
         fft_global_stage_test.root_module.linkFramework("QuartzCore", .{});
-        fft_global_stage_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        fft_global_stage_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         fft_global_stage_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     fft_global_stage_test.root_module.link_libc = true;
@@ -549,7 +561,7 @@ pub fn build(b: *std.Build) void {
     const fft_4step_test = b.addExecutable(.{
         .name = "test-fft-4step",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_fft_4step.zig"),
+            .root_source_file = b.path("tests/fft/tdd_fft_4step.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -563,7 +575,7 @@ pub fn build(b: *std.Build) void {
         fft_4step_test.root_module.linkFramework("Foundation", .{});
         fft_4step_test.root_module.linkFramework("Metal", .{});
         fft_4step_test.root_module.linkFramework("QuartzCore", .{});
-        fft_4step_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        fft_4step_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         fft_4step_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     fft_4step_test.root_module.link_libc = true;
@@ -573,7 +585,7 @@ pub fn build(b: *std.Build) void {
     const gpu_ifft_test = b.addExecutable(.{
         .name = "test-gpu-ifft",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifft.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifft.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -587,7 +599,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_test.root_module.linkFramework("Foundation", .{});
         gpu_ifft_test.root_module.linkFramework("Metal", .{});
         gpu_ifft_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_ifft_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_ifft_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_ifft_test.root_module.link_libc = true;
@@ -597,7 +609,7 @@ pub fn build(b: *std.Build) void {
     const metal_throughput_bench = b.addExecutable(.{
         .name = "bench-metal-throughput",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/bench_metal_throughput.zig"),
+            .root_source_file = b.path("tests/metal/bench_metal_throughput.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -610,7 +622,7 @@ pub fn build(b: *std.Build) void {
         metal_throughput_bench.root_module.linkFramework("Foundation", .{});
         metal_throughput_bench.root_module.linkFramework("Metal", .{});
         metal_throughput_bench.root_module.linkFramework("QuartzCore", .{});
-        metal_throughput_bench.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        metal_throughput_bench.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         metal_throughput_bench.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     metal_throughput_bench.root_module.link_libc = true;
@@ -621,7 +633,7 @@ pub fn build(b: *std.Build) void {
     const gpu_ifft_rt_test = b.addExecutable(.{
         .name = "test-gpu-ifft-roundtrip",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifft_roundtrip.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifft_roundtrip.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -635,7 +647,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_rt_test.root_module.linkFramework("Foundation", .{});
         gpu_ifft_rt_test.root_module.linkFramework("Metal", .{});
         gpu_ifft_rt_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_rt_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_ifft_rt_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_ifft_rt_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_ifft_rt_test.root_module.link_libc = true;
@@ -645,7 +657,7 @@ pub fn build(b: *std.Build) void {
     const gpu_fft_1024_test = b.addExecutable(.{
         .name = "test-gpu-fft-1024",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_fft_1024.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_fft_1024.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -659,7 +671,7 @@ pub fn build(b: *std.Build) void {
         gpu_fft_1024_test.root_module.linkFramework("Foundation", .{});
         gpu_fft_1024_test.root_module.linkFramework("Metal", .{});
         gpu_fft_1024_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_fft_1024_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_fft_1024_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_fft_1024_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_fft_1024_test.root_module.link_libc = true;
@@ -669,7 +681,7 @@ pub fn build(b: *std.Build) void {
     const twiddle_check = b.addExecutable(.{
         .name = "test-twiddle-check",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_twiddle_check.zig"),
+            .root_source_file = b.path("tests/fft/tdd_twiddle_check.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -684,7 +696,7 @@ pub fn build(b: *std.Build) void {
     const gpu_ifft_small_test = b.addExecutable(.{
         .name = "test-gpu-ifft-small",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifft_small.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifft_small.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -698,7 +710,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_small_test.root_module.linkFramework("Foundation", .{});
         gpu_ifft_small_test.root_module.linkFramework("Metal", .{});
         gpu_ifft_small_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_small_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_ifft_small_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_ifft_small_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_ifft_small_test.root_module.link_libc = true;
@@ -708,7 +720,7 @@ pub fn build(b: *std.Build) void {
     const gpu_ifft_trace = b.addExecutable(.{
         .name = "test-gpu-ifft-trace",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifft_trace.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifft_trace.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -722,7 +734,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_trace.root_module.linkFramework("Foundation", .{});
         gpu_ifft_trace.root_module.linkFramework("Metal", .{});
         gpu_ifft_trace.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_trace.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_ifft_trace.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_ifft_trace.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_ifft_trace.root_module.link_libc = true;
@@ -732,7 +744,7 @@ pub fn build(b: *std.Build) void {
     const gpu_roundtrip_large = b.addExecutable(.{
         .name = "test-gpu-roundtrip-large",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_roundtrip_large.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_roundtrip_large.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -746,7 +758,7 @@ pub fn build(b: *std.Build) void {
         gpu_roundtrip_large.root_module.linkFramework("Foundation", .{});
         gpu_roundtrip_large.root_module.linkFramework("Metal", .{});
         gpu_roundtrip_large.root_module.linkFramework("QuartzCore", .{});
-        gpu_roundtrip_large.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_roundtrip_large.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_roundtrip_large.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_roundtrip_large.root_module.link_libc = true;
@@ -756,7 +768,7 @@ pub fn build(b: *std.Build) void {
     const gpu_roundtrip_many = b.addExecutable(.{
         .name = "test-gpu-roundtrip-many",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_roundtrip_many.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_roundtrip_many.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -770,7 +782,7 @@ pub fn build(b: *std.Build) void {
         gpu_roundtrip_many.root_module.linkFramework("Foundation", .{});
         gpu_roundtrip_many.root_module.linkFramework("Metal", .{});
         gpu_roundtrip_many.root_module.linkFramework("QuartzCore", .{});
-        gpu_roundtrip_many.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_roundtrip_many.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_roundtrip_many.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_roundtrip_many.root_module.link_libc = true;
@@ -780,7 +792,7 @@ pub fn build(b: *std.Build) void {
     const gpu_fft_only = b.addExecutable(.{
         .name = "test-gpu-fft-only",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_fft_only.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_fft_only.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -794,7 +806,7 @@ pub fn build(b: *std.Build) void {
         gpu_fft_only.root_module.linkFramework("Foundation", .{});
         gpu_fft_only.root_module.linkFramework("Metal", .{});
         gpu_fft_only.root_module.linkFramework("QuartzCore", .{});
-        gpu_fft_only.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_fft_only.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_fft_only.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_fft_only.root_module.link_libc = true;
@@ -804,7 +816,7 @@ pub fn build(b: *std.Build) void {
     const gpu_ifft_only = b.addExecutable(.{
         .name = "test-gpu-ifft-only",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifft_only.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifft_only.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -818,7 +830,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_only.root_module.linkFramework("Foundation", .{});
         gpu_ifft_only.root_module.linkFramework("Metal", .{});
         gpu_ifft_only.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_only.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_ifft_only.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_ifft_only.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_ifft_only.root_module.link_libc = true;
@@ -828,7 +840,7 @@ pub fn build(b: *std.Build) void {
     const twiddle_inv_cmp = b.addExecutable(.{
         .name = "test-twiddle-inv-compare",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_twiddle_inv_compare.zig"),
+            .root_source_file = b.path("tests/fft/tdd_twiddle_inv_compare.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -843,7 +855,7 @@ pub fn build(b: *std.Build) void {
     const twiddle_cache_check = b.addExecutable(.{
         .name = "test-twiddle-cache-check",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_twiddle_cache_check.zig"),
+            .root_source_file = b.path("tests/fft/tdd_twiddle_cache_check.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -857,7 +869,7 @@ pub fn build(b: *std.Build) void {
         twiddle_cache_check.root_module.linkFramework("Foundation", .{});
         twiddle_cache_check.root_module.linkFramework("Metal", .{});
         twiddle_cache_check.root_module.linkFramework("QuartzCore", .{});
-        twiddle_cache_check.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        twiddle_cache_check.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         twiddle_cache_check.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     twiddle_cache_check.root_module.link_libc = true;
@@ -867,7 +879,7 @@ pub fn build(b: *std.Build) void {
     const gpu_ifft_old = b.addExecutable(.{
         .name = "test-gpu-ifft-old-style",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifft_old_style.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifft_old_style.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -881,7 +893,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_old.root_module.linkFramework("Foundation", .{});
         gpu_ifft_old.root_module.linkFramework("Metal", .{});
         gpu_ifft_old.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_old.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        gpu_ifft_old.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         gpu_ifft_old.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     gpu_ifft_old.root_module.link_libc = true;
@@ -891,7 +903,7 @@ pub fn build(b: *std.Build) void {
     const tile_ifft_test = b.addExecutable(.{
         .name = "test-gpu-tile-ifft",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_tile_ifft.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_tile_ifft.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -905,7 +917,7 @@ pub fn build(b: *std.Build) void {
         tile_ifft_test.root_module.linkFramework("Foundation", .{});
         tile_ifft_test.root_module.linkFramework("Metal", .{});
         tile_ifft_test.root_module.linkFramework("QuartzCore", .{});
-        tile_ifft_test.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        tile_ifft_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         tile_ifft_test.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     tile_ifft_test.root_module.link_libc = true;
@@ -915,7 +927,7 @@ pub fn build(b: *std.Build) void {
     const tile_global_ifft = b.addExecutable(.{
         .name = "test-gpu-tile-global-ifft",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_tile_global_ifft.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_tile_global_ifft.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -929,7 +941,7 @@ pub fn build(b: *std.Build) void {
         tile_global_ifft.root_module.linkFramework("Foundation", .{});
         tile_global_ifft.root_module.linkFramework("Metal", .{});
         tile_global_ifft.root_module.linkFramework("QuartzCore", .{});
-        tile_global_ifft.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        tile_global_ifft.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         tile_global_ifft.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     tile_global_ifft.root_module.link_libc = true;
@@ -939,7 +951,7 @@ pub fn build(b: *std.Build) void {
     const calcH_pipeline = b.addExecutable(.{
         .name = "test-gpu-calculateh-pipeline",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_calculateh_pipeline.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_calculateh_pipeline.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -953,7 +965,7 @@ pub fn build(b: *std.Build) void {
         calcH_pipeline.root_module.linkFramework("Foundation", .{});
         calcH_pipeline.root_module.linkFramework("Metal", .{});
         calcH_pipeline.root_module.linkFramework("QuartzCore", .{});
-        calcH_pipeline.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        calcH_pipeline.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         calcH_pipeline.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     calcH_pipeline.root_module.link_libc = true;
@@ -963,7 +975,7 @@ pub fn build(b: *std.Build) void {
     const calcH_many = b.addExecutable(.{
         .name = "test-gpu-calculateh-many",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_calculateh_pipeline_many.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_calculateh_pipeline_many.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -977,7 +989,7 @@ pub fn build(b: *std.Build) void {
         calcH_many.root_module.linkFramework("Foundation", .{});
         calcH_many.root_module.linkFramework("Metal", .{});
         calcH_many.root_module.linkFramework("QuartzCore", .{});
-        calcH_many.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        calcH_many.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         calcH_many.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     calcH_many.root_module.link_libc = true;
@@ -987,7 +999,7 @@ pub fn build(b: *std.Build) void {
     const bitreverse_large = b.addExecutable(.{
         .name = "test-gpu-bitreverse-large",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_bitreverse_large.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_bitreverse_large.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -1001,7 +1013,7 @@ pub fn build(b: *std.Build) void {
         bitreverse_large.root_module.linkFramework("Foundation", .{});
         bitreverse_large.root_module.linkFramework("Metal", .{});
         bitreverse_large.root_module.linkFramework("QuartzCore", .{});
-        bitreverse_large.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        bitreverse_large.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         bitreverse_large.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     bitreverse_large.root_module.link_libc = true;
@@ -1011,7 +1023,7 @@ pub fn build(b: *std.Build) void {
     const ifftscale_large = b.addExecutable(.{
         .name = "test-gpu-ifftscale-large",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/tdd_gpu_ifftscale_large.zig"),
+            .root_source_file = b.path("tests/gpu/tdd_gpu_ifftscale_large.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -1025,7 +1037,7 @@ pub fn build(b: *std.Build) void {
         ifftscale_large.root_module.linkFramework("Foundation", .{});
         ifftscale_large.root_module.linkFramework("Metal", .{});
         ifftscale_large.root_module.linkFramework("QuartzCore", .{});
-        ifftscale_large.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/molten-vk/lib" });
+        ifftscale_large.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
         ifftscale_large.root_module.linkSystemLibrary("MoltenVK", .{});
     }
     ifftscale_large.root_module.link_libc = true;

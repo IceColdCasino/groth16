@@ -1,0 +1,49 @@
+name: macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install glslang molten-vk zig
+
+      - name: Test libgroth16
+        run: |
+          set -euo pipefail
+          zig version
+          zig build test -Doptimize=ReleaseFast
+
+      - name: Test zkey
+        working-directory: zkey-setup
+        run: |
+          set -euo pipefail
+          zig version
+          zig build test -Doptimize=ReleaseFast
+
+      - name: Build release artifacts
+        run: |
+          set -euo pipefail
+          prefix="${RUNNER_TEMP}/prefix"
+          zig build -Doptimize=ReleaseFast
+          (cd zkey-setup && zig build -Doptimize=ReleaseFast --prefix "$prefix")
+          mkdir -p "$prefix/lib" "$prefix/include"
+          cp zig-out/lib/libgroth16.dylib zig-out/lib/libgroth16.a "$prefix/lib/"
+          cp zig-out/include/groth16.h "$prefix/include/"
+          test -x "$prefix/bin/zkey"
+          test -f "$prefix/bin/bn254.metallib"
+          test -f "$prefix/lib/libgroth16.dylib"
+          nm -gU "$prefix/lib/libgroth16.dylib" | grep -q ' _groth16_verify$'
+          libpath="$("$prefix/bin/zkey" lib)"
+          expected="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$prefix/lib/libgroth16.dylib")"
+          test "$libpath" = "$expected"
+          set +o pipefail
+          "$prefix/bin/zkey" 2>&1 | grep -q 'zkey lib'

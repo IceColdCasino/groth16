@@ -1,8 +1,6 @@
 const std = @import("std");
 const gpu = @import("gpu");
-const c = @cImport({
-    @cInclude("sys/time.h");
-});
+const c = @import("c");
 
 fn getTimeMs() f64 {
     var tv: c.timeval = undefined;

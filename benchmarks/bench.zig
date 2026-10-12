@@ -1,11 +1,8 @@
 const std = @import("std");
 const cpu = @import("cpu");
 const gpu = @import("gpu");
-const testdata = @import("rapidsnark_testdata");
-const c = @cImport({
-    @cInclude("sys/time.h");
-    @cInclude("stdlib.h");
-});
+const testdata = @import("testdata");
+const c = @import("c");
 
 fn getTimeMs() f64 {
     var tv: c.timeval = undefined;

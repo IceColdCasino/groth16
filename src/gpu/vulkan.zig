@@ -4,9 +4,7 @@ const spirv = @import("spirv");
 const mod = @import("mod.zig");
 const cpu = @import("cpu");
 
-const c = @cImport({
-    @cInclude("vulkan/vulkan.h");
-});
+const c = @import("vk");
 
 const VulkanLoader = struct {
     lib: std.DynLib,

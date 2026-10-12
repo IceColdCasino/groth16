@@ -3,10 +3,7 @@ const mod = @import("mod.zig");
 const cpu = @import("cpu");
 const mtl = @import("zig-metal");
 
-// C stdio for file reading
-const c_stdio = @cImport({
-    @cInclude("stdio.h");
-});
+const libc = @import("c");
 
 // ============================================================================
 // Witness preload cache (global, mutex-protected)
@@ -83,19 +80,19 @@ fn preloadWitness(path: []u8) void {
 // ============================================================================
 
 fn readFileToBuffer(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    const path_z = try allocator.dupeZ(u8, path);
+    const path_z = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(path_z);
 
-    const file = c_stdio.fopen(path_z.ptr, "rb");
+    const file = libc.fopen(path_z.ptr, "rb");
     if (file == null) return error.FileNotFound;
-    defer _ = c_stdio.fclose(file);
+    defer _ = libc.fclose(file);
 
-    _ = c_stdio.fseek(file, 0, c_stdio.SEEK_END);
-    const size = c_stdio.ftell(file);
-    _ = c_stdio.fseek(file, 0, c_stdio.SEEK_SET);
+    _ = libc.fseek(file, 0, libc.SEEK_END);
+    const size = libc.ftell(file);
+    _ = libc.fseek(file, 0, libc.SEEK_SET);
 
     const buf = try allocator.alloc(u8, @intCast(size));
-    const read_size = c_stdio.fread(buf.ptr, 1, @intCast(size), file);
+    const read_size = libc.fread(buf.ptr, 1, @intCast(size), file);
     if (read_size != @as(usize, @intCast(size))) {
         allocator.free(buf);
         return error.ReadFailed;
@@ -2788,7 +2785,7 @@ pub const MetalProver = struct {
         cmd_buffer.waitUntilCompleted();
     }
 
-    /// rapidsnark-style inverse FFT post-process: after forward FFT,
+    /// Inverse FFT post-process: after forward FFT,
     /// swap a[i] <-> a[n-i] for i=1..n/2-1 and scale all by inverse_n.
     pub fn fftIfftPostprocess(
         self: *Self,
@@ -3226,7 +3223,7 @@ pub fn calculateHGpu(
     cpu.fft.ifft_fr(c_mut, domainSize);
 
     // Shift coefficients to coset domain by multiplying with g^i
-    // where g is the 2n-th primitive root of unity (matches CPU/rapidsnark)
+    // where g is the 2n-th primitive root of unity
     const g = switch (domainSize) {
         1024 => cpu.fft.FR_OMEGA_2048,
         2048 => cpu.fft.FR_OMEGA_4096,
@@ -3262,7 +3259,7 @@ pub fn calculateHGpu(
     for (0..n) |i| {
         const ab = cpu.field.fr_mul(a_mut[i], b_mut[i]);
         h[i] = cpu.field.fr_sub(ab, c_mut[i]);
-        // Convert to normal form for MSM (matches rapidsnark's fromMontgomery)
+        // Convert to normal form for MSM.
         h[i] = cpu.field.fr_fromMont(h[i]);
     }
 
@@ -3275,11 +3272,8 @@ pub const ProveOptions = struct {
 };
 
 fn getTimeMs() f64 {
-    const c = @cImport({
-        @cInclude("sys/time.h");
-    });
-    var tv: c.timeval = undefined;
-    _ = c.gettimeofday(&tv, null);
+    var tv: libc.timeval = undefined;
+    _ = libc.gettimeofday(&tv, null);
     return @as(f64, @floatFromInt(tv.tv_sec)) * 1000.0 + @as(f64, @floatFromInt(tv.tv_usec)) / 1000.0;
 }
 

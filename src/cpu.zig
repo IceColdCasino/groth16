@@ -2,19 +2,19 @@ const std = @import("std");
 
 // Re-export shared submodules so the GPU module can access them without
 // cross-module file import issues.
-pub const prover = @import("prover.zig");
-pub const verifier = @import("verifier.zig");
-pub const parser = @import("parser.zig");
-pub const field = @import("field.zig");
-pub const curve = @import("curve.zig");
-pub const fft = @import("fft.zig");
-pub const msm = @import("msm.zig");
-pub const json = @import("json.zig");
-pub const random = @import("random.zig");
-pub const pairing = @import("pairing.zig");
-pub const qap = @import("gpu/qap.zig");
-pub const assembler = @import("gpu/assembler.zig");
-pub const zkey_cache = @import("zkey_cache.zig");
+pub const prover = @import("core/prover.zig");
+pub const verifier = @import("core/verifier.zig");
+pub const parser = @import("core/parser.zig");
+pub const field = @import("core/field.zig");
+pub const curve = @import("core/curve.zig");
+pub const fft = @import("core/fft.zig");
+pub const msm = @import("core/msm.zig");
+pub const json = @import("core/json.zig");
+pub const random = @import("core/random.zig");
+pub const pairing = @import("core/pairing.zig");
+pub const qap = @import("core/qap.zig");
+pub const assembler = @import("core/assembler.zig");
+pub const zkey_cache = @import("core/zkey_cache.zig");
 
 test {
     // Force inclusion of tests from all re-exported modules.
@@ -32,9 +32,7 @@ test {
     _ = assembler;
 }
 
-const c = @cImport({
-    @cInclude("stdio.h");
-});
+const c = @import("c");
 
 pub const ProverError = error{
     ProverFailed,
@@ -55,7 +53,7 @@ pub const ProofResult = struct {
 
 /// Read entire file into memory using C stdio
 pub fn readFileToBuffer(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    const path_z = try allocator.dupeZ(u8, path);
+    const path_z = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(path_z);
 
     const file = c.fopen(path_z.ptr, "rb");
