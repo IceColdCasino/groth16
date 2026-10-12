@@ -206,7 +206,7 @@ pub fn bitReverseFr(a: []field.FrElement, n: u32) void {
 // Normal values: 5^((q-1)/n) mod q
 // Montgomery form: omega * R mod q
 
-const FR_OMEGA_1024 = field.FrElement{ 0x1ef4b3b4280c1184, 0xcf7ad4c2ae5e2a2c, 0xb8063b6cc5a36518, 0x2348c4b965dfc08c };
+pub const FR_OMEGA_1024 = field.FrElement{ 0x1ef4b3b4280c1184, 0xcf7ad4c2ae5e2a2c, 0xb8063b6cc5a36518, 0x2348c4b965dfc08c };
 
 pub const FR_OMEGA_2048 = field.FrElement{ 0x48e72189ae4fcfb2, 0x0a03fb3c8df85a07, 0xff4d8a35ea9b2e0a, 0x28a98c2ecd9c1d77 };
 
@@ -218,11 +218,11 @@ pub const FR_OMEGA_16384 = field.FrElement{ 0xba13a0c74d05eab8, 0x2e015d6311ab31
 
 pub const FR_OMEGA_32768 = field.FrElement{ 0x804ef7055bfdb854, 0x7aa76b7140ceeaf2, 0xfcc95a68b2fe89cb, 0x1d461c35f1c406c7 };
 
-pub const FR_OMEGA_65536 = field.FrElement{ 0xba13a0c74d05eab8, 0x2e015d6311ab3116, 0xb503922c8ca5a05a, 0x06be15d7fee394da };
+pub const FR_OMEGA_65536 = field.FrElement{ 0x47b3e75939397433, 0x6d3a3a920d1c24d1, 0xa134125174f75f43, 0x1b821f01ee6ad556 };
 
-pub const FR_OMEGA_131072 = field.FrElement{ 0x894cdcbe79a04ed6, 0x956cde6a44d30787, 0x59a1b62bd7dbc15f, 0x12ebe4109a806f4e };
+pub const FR_OMEGA_131072 = field.FrElement{ 0xda05b8d81204dc7c, 0x48322ae606308d41, 0x35358e27849e892c, 0x040fcafbd62dd592 };
 
-pub const FR_OMEGA_262144 = field.FrElement{ 0x1dd4522fb3ecdbd3, 0x68222a93d055f3ad, 0xbe9c7d66b3d555e8, 0x1b92f6b86194f846 };
+pub const FR_OMEGA_262144 = field.FrElement{ 0x2566c62f09700b84, 0x33183a76a0bf8660, 0xd9398f59575058f1, 0x056d2ece39d1cd34 };
 
 pub const FR_OMEGA_524288 = field.FrElement{ 0x049ea3b7e6a27a36, 0xefebe603053edbbc, 0x8424b45a3ace9ed4, 0x287c8390a688795e };
 
@@ -334,6 +334,28 @@ test "2048-th root is square of 1024-th root" {
     try std.testing.expect(field.fr_eq(g_sqr, FR_OMEGA_1024));
 }
 
+test "roots of unity square to the next smaller root" {
+    const pairs = [_][2]field.FrElement{
+        .{ FR_OMEGA_2048, FR_OMEGA_1024 },
+        .{ FR_OMEGA_4096, FR_OMEGA_2048 },
+        .{ FR_OMEGA_8192, FR_OMEGA_4096 },
+        .{ FR_OMEGA_16384, FR_OMEGA_8192 },
+        .{ FR_OMEGA_32768, FR_OMEGA_16384 },
+        .{ FR_OMEGA_65536, FR_OMEGA_32768 },
+        .{ FR_OMEGA_131072, FR_OMEGA_65536 },
+        .{ FR_OMEGA_262144, FR_OMEGA_131072 },
+        .{ FR_OMEGA_524288, FR_OMEGA_262144 },
+        .{ FR_OMEGA_1048576, FR_OMEGA_524288 },
+        .{ FR_OMEGA_2097152, FR_OMEGA_1048576 },
+        .{ FR_OMEGA_4194304, FR_OMEGA_2097152 },
+        .{ FR_OMEGA_8388608, FR_OMEGA_4194304 },
+    };
+    for (pairs) |pair| {
+        const squared = field.fr_mul(pair[0], pair[0]);
+        try std.testing.expect(field.fr_eq(squared, pair[1]));
+    }
+}
+
 test "fft ifft 8-point roundtrip" {
     var data = [_]field.FrElement{
         field.fr_toMont(field.fr_from_u64(1)),
@@ -357,17 +379,17 @@ test "fft ifft 8192-point roundtrip" {
     const n: u32 = 8192;
     var data = try std.testing.allocator.alloc(field.FrElement, n);
     defer std.testing.allocator.free(data);
-    
+
     for (0..n) |i| {
         data[i] = field.fr_toMont(field.fr_from_u64(@intCast(i + 1)));
     }
-    
+
     const copy = try std.testing.allocator.dupe(field.FrElement, data);
     defer std.testing.allocator.free(copy);
-    
+
     fft_fr(data, n);
     ifft_fr(data, n);
-    
+
     for (data, copy) |d, c| {
         try std.testing.expect(field.fr_eq(d, c));
     }
@@ -402,18 +424,16 @@ test "fft ifft 1024-point roundtrip with qap data" {
     }
 }
 
-
-
 test "check omega chain" {
     const g1 = field.fr_mul(FR_OMEGA_2048, FR_OMEGA_2048);
     try std.testing.expect(field.fr_eq(g1, FR_OMEGA_1024));
-    
+
     const g2 = field.fr_mul(FR_OMEGA_4096, FR_OMEGA_4096);
     try std.testing.expect(field.fr_eq(g2, FR_OMEGA_2048));
-    
+
     const g3 = field.fr_mul(FR_OMEGA_8192, FR_OMEGA_8192);
     try std.testing.expect(field.fr_eq(g3, FR_OMEGA_4096));
-    
+
     const g4 = field.fr_mul(FR_OMEGA_16384, FR_OMEGA_16384);
     const is_ok = field.fr_eq(g4, FR_OMEGA_8192);
     std.debug.print("omega_16384^2 == omega_8192? {}\n", .{is_ok});

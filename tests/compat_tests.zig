@@ -49,6 +49,7 @@ test {
     _ = @import("metal/tdd_metal_calculateh.zig");
     _ = @import("metal/tdd_metal_msm_g1.zig");
     _ = @import("metal/tdd_metal_msm_g2.zig");
+    _ = @import("metal/tdd_metal_gpu_gaps.zig");
     _ = @import("metal/tdd_metal.zig");
     _ = @import("vulkan/tdd_vulkan_msm_g1.zig");
     _ = @import("vulkan/tdd_vulkan_msm_g2.zig");
@@ -56,8 +57,6 @@ test {
     _ = @import("msm/tdd_concurrent_msm.zig");
     _ = @import("prove/tdd_proof_serial_vs_concurrent.zig");
 }
-
-
 
 test "print medium circuit info" {
     // The medium zkey is a local benchmark fixture and is not in the repo.
@@ -67,7 +66,7 @@ test "print medium circuit info" {
     defer std.testing.allocator.free(zkey_data);
     var zkey = try cpu.parser.parseZkey(std.testing.allocator, zkey_data);
     defer zkey.deinit(std.testing.allocator);
-    
+
     std.debug.print("Medium circuit: domainSize={d}, nVars={d}, nPublic={d}\n", .{
         zkey.header.domainSize,
         zkey.header.nVars,
@@ -76,34 +75,41 @@ test "print medium circuit info" {
 }
 
 fn checkIsRootOfUnity(omega: cpu.field.FrElement, n: u32) !void {
-    var r = omega;
-    var i = n;
+    // omega^(n/2) == -1 distinguishes a primitive n-th root from a root of smaller order.
+    var half = omega;
+    var i = n >> 1;
     while (i > 1) {
-        r = cpu.field.fr_sqr(r);
+        half = cpu.field.fr_sqr(half);
         i >>= 1;
     }
-    try std.testing.expect(cpu.field.fr_eq(r, cpu.field.fr_one()));
+    try std.testing.expect(cpu.field.fr_eq(half, cpu.field.fr_neg(cpu.field.fr_one())));
+    try std.testing.expect(cpu.field.fr_eq(cpu.field.fr_sqr(half), cpu.field.fr_one()));
 }
 
 test "omega values are proper roots of unity and chain correctly" {
-    // Verify squaring chain: omega_{2n}^2 == omega_n
-    try std.testing.expect(cpu.field.fr_eq(
-        cpu.field.fr_mul(cpu.fft.FR_OMEGA_4096, cpu.fft.FR_OMEGA_4096),
-        cpu.fft.FR_OMEGA_2048));
-    try std.testing.expect(cpu.field.fr_eq(
-        cpu.field.fr_mul(cpu.fft.FR_OMEGA_8192, cpu.fft.FR_OMEGA_8192),
-        cpu.fft.FR_OMEGA_4096));
-    try std.testing.expect(cpu.field.fr_eq(
-        cpu.field.fr_mul(cpu.fft.FR_OMEGA_16384, cpu.fft.FR_OMEGA_16384),
-        cpu.fft.FR_OMEGA_8192));
-    try std.testing.expect(cpu.field.fr_eq(
-        cpu.field.fr_mul(cpu.fft.FR_OMEGA_32768, cpu.fft.FR_OMEGA_32768),
-        cpu.fft.FR_OMEGA_16384));
-
-    // Verify each is a primitive root: omega^n == 1
-    try checkIsRootOfUnity(cpu.fft.FR_OMEGA_2048, 2048);
-    try checkIsRootOfUnity(cpu.fft.FR_OMEGA_4096, 4096);
-    try checkIsRootOfUnity(cpu.fft.FR_OMEGA_8192, 8192);
-    try checkIsRootOfUnity(cpu.fft.FR_OMEGA_16384, 16384);
-    try checkIsRootOfUnity(cpu.fft.FR_OMEGA_32768, 32768);
+    const chain = [_]cpu.field.FrElement{
+        cpu.fft.FR_OMEGA_1024,
+        cpu.fft.FR_OMEGA_2048,
+        cpu.fft.FR_OMEGA_4096,
+        cpu.fft.FR_OMEGA_8192,
+        cpu.fft.FR_OMEGA_16384,
+        cpu.fft.FR_OMEGA_32768,
+        cpu.fft.FR_OMEGA_65536,
+        cpu.fft.FR_OMEGA_131072,
+        cpu.fft.FR_OMEGA_262144,
+        cpu.fft.FR_OMEGA_524288,
+        cpu.fft.FR_OMEGA_1048576,
+        cpu.fft.FR_OMEGA_2097152,
+        cpu.fft.FR_OMEGA_4194304,
+        cpu.fft.FR_OMEGA_8388608,
+    };
+    // omega_{2n}^2 == omega_n, and each value is a primitive root of its order.
+    var n: u32 = 1024;
+    for (chain, 0..) |omega, i| {
+        try checkIsRootOfUnity(omega, n);
+        if (i + 1 < chain.len) {
+            try std.testing.expect(cpu.field.fr_eq(cpu.field.fr_mul(chain[i + 1], chain[i + 1]), omega));
+        }
+        n <<= 1;
+    }
 }

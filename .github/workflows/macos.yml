@@ -83,9 +83,11 @@ jobs:
           cat > "${RUNNER_TEMP}/notes.md" <<EOF
           ## ${version}
 
-          First macOS release of the Groth16 prover and \`zkey\` setup tool.
+          Groth16 prover and \`zkey\` setup tool for macOS.
 
-          \`libgroth16\` is a drop-in for librapidsnark: the same \`groth16_*\` C entry points, JSON proof and public inputs, and return codes. \`zkey\` is a drop-in for snarkjs zkey setup, contribute, and verification-key export. The default prove path runs Zig on the CPU and Metal on the GPU together.
+          \`libgroth16\` is a drop-in for librapidsnark: the same \`groth16_*\` C entry points, JSON proof and public inputs, and return codes. \`zkey\` is a drop-in for snarkjs zkey setup, contribute, and verification-key export. The default prove path runs Zig on the CPU and Metal on the GPU together. Circuits whose domain is 4096 or smaller stay on the Zig CPU prover.
+
+          The BN254 roots of unity from order 2^16 through 2^18 match the squaring chain. \`PROVER_CHECK=1\` compares the Metal H polynomial and multiscalar multiplies with the CPU.
 
           ### Archive
 

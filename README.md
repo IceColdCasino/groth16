@@ -6,7 +6,7 @@ The default path runs Zig on the CPU and Metal on the GPU at the same time. Meas
 
 ## Install
 
-The stable formula downloads the Apple Silicon archive from the [0.1.0 GitHub release](https://github.com/IceColdCasino/groth16/releases/tag/v0.1.0). That install does not need Zig or Xcode. macOS 14 or newer is required. A Linux package is not available yet.
+The stable formula downloads the Apple Silicon archive from the [0.2.0 GitHub release](https://github.com/IceColdCasino/groth16/releases/tag/v0.2.0). That install does not need Zig or Xcode. macOS 14 or newer is required. A Linux package is not available yet.
 
 ```sh
 brew trust --tap IceColdCasino/groth16
@@ -34,7 +34,7 @@ brew install icecoldcasino/groth16/zkey
 
 The first line is the only thing on stdout, so `zkey lib` can be used from a script.
 
-The 0.1.0 archive is the Metal build. `--HEAD` builds main with Zig 0.17 and Xcode. Add `--with-vulkan` on that path to install glslang and MoltenVK and pass `-Dvulkan=true`:
+The 0.2.0 archive is the Metal build. Circuits with a domain of 4096 or smaller prove on the Zig CPU. `--HEAD` builds main with Zig 0.17 and Xcode. Add `--with-vulkan` on that path to install glslang and MoltenVK and pass `-Dvulkan=true`:
 
 ```sh
 brew install --HEAD icecoldcasino/groth16/zkey

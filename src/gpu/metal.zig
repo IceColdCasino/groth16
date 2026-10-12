@@ -180,11 +180,11 @@ fn parseZkey(buf: []const u8) !ZkeySections {
         .n_public = n_public,
         .domain_size = domain_size,
         .n8q = n8q,
-        .points_a = buf[sec5.offset..sec5.offset + sec5.size],
-        .points_b1 = buf[sec6.offset..sec6.offset + sec6.size],
-        .points_b2 = buf[sec7.offset..sec7.offset + sec7.size],
-        .points_c = buf[sec8.offset..sec8.offset + sec8.size],
-        .points_h = buf[sec9.offset..sec9.offset + sec9.size],
+        .points_a = buf[sec5.offset .. sec5.offset + sec5.size],
+        .points_b1 = buf[sec6.offset .. sec6.offset + sec6.size],
+        .points_b2 = buf[sec7.offset .. sec7.offset + sec7.size],
+        .points_c = buf[sec8.offset .. sec8.offset + sec8.size],
+        .points_h = buf[sec9.offset .. sec9.offset + sec9.size],
     };
 }
 
@@ -230,7 +230,7 @@ fn parseWtns(buf: []const u8) !WtnsData {
 
     return WtnsData{
         .n_vars = n_vars,
-        .data = buf[sec2_offset..sec2_offset + sec2_size],
+        .data = buf[sec2_offset .. sec2_offset + sec2_size],
     };
 }
 
@@ -1072,7 +1072,7 @@ pub const MetalProver = struct {
 
         // Pass 1+2: Bucket reduce + Window reduce in single command buffer
         {
-        const threads_per_bucket: usize = 64;
+            const threads_per_bucket: usize = 64;
             var cmd_buffer = self.command_queue.commandBuffer() orelse return error.CommandBufferFailed;
 
             // Pass 1: Bucket reduce — 64 threads per bucket (524288 threads)
@@ -2530,7 +2530,7 @@ pub const MetalProver = struct {
             fwd_cpu[i] = cpu.field.fr_mul(fwd_cpu[i - 1], omega);
         }
         const fwd_buf = self.device.newBufferWithLengthOptions(half_n * fr_size, mtl.MTLResourceOptions.MTLResourceCPUCacheModeDefaultCache) orelse return error.BufferCreationFailed;
-        @memcpy(@as([*]u8, @ptrCast(fwd_buf.contents().?))[0..half_n * fr_size], std.mem.sliceAsBytes(fwd_cpu));
+        @memcpy(@as([*]u8, @ptrCast(fwd_buf.contents().?))[0 .. half_n * fr_size], std.mem.sliceAsBytes(fwd_cpu));
         try self.twiddle_cache_fwd.put(n, fwd_buf);
 
         // Inverse twiddles
@@ -2542,7 +2542,7 @@ pub const MetalProver = struct {
             inv_cpu[i] = cpu.field.fr_mul(inv_cpu[i - 1], omega_inv);
         }
         const inv_buf = self.device.newBufferWithLengthOptions(half_n * fr_size, mtl.MTLResourceOptions.MTLResourceCPUCacheModeDefaultCache) orelse return error.BufferCreationFailed;
-        @memcpy(@as([*]u8, @ptrCast(inv_buf.contents().?))[0..half_n * fr_size], std.mem.sliceAsBytes(inv_cpu));
+        @memcpy(@as([*]u8, @ptrCast(inv_buf.contents().?))[0 .. half_n * fr_size], std.mem.sliceAsBytes(inv_cpu));
         try self.twiddle_cache_inv.put(n, inv_buf);
     }
 
@@ -2569,7 +2569,7 @@ pub const MetalProver = struct {
             power = cpu.field.fr_mul(power, g);
         }
         const cs_buf = self.device.newBufferWithLengthOptions(n * fr_size, mtl.MTLResourceOptions.MTLResourceCPUCacheModeDefaultCache) orelse return error.BufferCreationFailed;
-        @memcpy(@as([*]u8, @ptrCast(cs_buf.contents().?))[0..n * fr_size], std.mem.sliceAsBytes(cs_cpu));
+        @memcpy(@as([*]u8, @ptrCast(cs_buf.contents().?))[0 .. n * fr_size], std.mem.sliceAsBytes(cs_cpu));
         try self.coset_shift_cache.put(n, cs_buf);
     }
 
@@ -2835,7 +2835,7 @@ pub const MetalProver = struct {
         defer data_buffer.release();
 
         if (data_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..data.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(data));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. data.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(data));
         }
 
         // Precompute twiddles
@@ -2851,7 +2851,7 @@ pub const MetalProver = struct {
         ) orelse return error.BufferCreationFailed;
         defer twiddles_buffer.release();
         if (twiddles_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..twiddles.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(twiddles));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. twiddles.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(twiddles));
         }
 
         var n_buffer = self.device.newBufferWithLengthOptions(
@@ -2881,7 +2881,7 @@ pub const MetalProver = struct {
         cmd_buffer.waitUntilCompleted();
 
         if (data_buffer.contents()) |ptr| {
-            @memcpy(std.mem.sliceAsBytes(data), @as([*]u8, @ptrCast(ptr))[0..data.len * @sizeOf(cpu.field.FrElement)]);
+            @memcpy(std.mem.sliceAsBytes(data), @as([*]u8, @ptrCast(ptr))[0 .. data.len * @sizeOf(cpu.field.FrElement)]);
         }
     }
 
@@ -2899,7 +2899,7 @@ pub const MetalProver = struct {
         defer data_buffer.release();
 
         if (data_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..data.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(data));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. data.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(data));
         }
 
         // Precompute g^i
@@ -2917,7 +2917,7 @@ pub const MetalProver = struct {
         ) orelse return error.BufferCreationFailed;
         defer g_buffer.release();
         if (g_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..g_powers.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(g_powers));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. g_powers.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(g_powers));
         }
 
         var n_buffer = self.device.newBufferWithLengthOptions(
@@ -2947,7 +2947,7 @@ pub const MetalProver = struct {
         cmd_buffer.waitUntilCompleted();
 
         if (data_buffer.contents()) |ptr| {
-            @memcpy(std.mem.sliceAsBytes(data), @as([*]u8, @ptrCast(ptr))[0..data.len * @sizeOf(cpu.field.FrElement)]);
+            @memcpy(std.mem.sliceAsBytes(data), @as([*]u8, @ptrCast(ptr))[0 .. data.len * @sizeOf(cpu.field.FrElement)]);
         }
     }
 
@@ -2977,13 +2977,13 @@ pub const MetalProver = struct {
         defer c_buffer.release();
 
         if (a_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..a.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(a));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. a.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(a));
         }
         if (b_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..b.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(b));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. b.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(b));
         }
         if (c_buffer.contents()) |ptr| {
-            @memcpy(@as([*]u8, @ptrCast(ptr))[0..c.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(c));
+            @memcpy(@as([*]u8, @ptrCast(ptr))[0 .. c.len * @sizeOf(cpu.field.FrElement)], std.mem.sliceAsBytes(c));
         }
 
         var n_buffer = self.device.newBufferWithLengthOptions(
@@ -3012,7 +3012,7 @@ pub const MetalProver = struct {
         cmd_buffer.waitUntilCompleted();
 
         if (a_buffer.contents()) |ptr| {
-            @memcpy(std.mem.sliceAsBytes(h), @as([*]u8, @ptrCast(ptr))[0..h.len * @sizeOf(cpu.field.FrElement)]);
+            @memcpy(std.mem.sliceAsBytes(h), @as([*]u8, @ptrCast(ptr))[0 .. h.len * @sizeOf(cpu.field.FrElement)]);
         }
     }
 
@@ -3271,6 +3271,14 @@ pub const ProveOptions = struct {
     s: ?cpu.field.FrElement = null,
 };
 
+/// Register and other circuits at this domain size or smaller are faster on the
+/// Zig CPU prover. Metal setup dominates the prove.
+pub const cpu_domain_max: u32 = 4096;
+
+pub fn prefersCpu(domain_size: u32) bool {
+    return domain_size <= cpu_domain_max;
+}
+
 fn getTimeMs() f64 {
     var tv: libc.timeval = undefined;
     _ = libc.gettimeofday(&tv, null);
@@ -3318,8 +3326,8 @@ fn countNonInfinityG1(points_bytes: []const u8) usize {
     var count: usize = 0;
     var i: usize = 0;
     while (i + g1_point_size <= points_bytes.len) : (i += g1_point_size) {
-        const x_zero = std.mem.allEqual(u8, points_bytes[i..i + 32], 0);
-        const y_zero = std.mem.allEqual(u8, points_bytes[i + 32..i + 64], 0);
+        const x_zero = std.mem.allEqual(u8, points_bytes[i .. i + 32], 0);
+        const y_zero = std.mem.allEqual(u8, points_bytes[i + 32 .. i + 64], 0);
         if (!x_zero or !y_zero) count += 1;
     }
     return count;
@@ -3331,8 +3339,8 @@ fn countNonInfinityG2(points_bytes: []const u8) usize {
     var count: usize = 0;
     var i: usize = 0;
     while (i + g2_point_size <= points_bytes.len) : (i += g2_point_size) {
-        const x_zero = std.mem.allEqual(u8, points_bytes[i..i + 64], 0);
-        const y_zero = std.mem.allEqual(u8, points_bytes[i + 64..i + 128], 0);
+        const x_zero = std.mem.allEqual(u8, points_bytes[i .. i + 64], 0);
+        const y_zero = std.mem.allEqual(u8, points_bytes[i + 64 .. i + 128], 0);
         if (!x_zero or !y_zero) count += 1;
     }
     return count;
@@ -3355,6 +3363,79 @@ fn alignedPoints(comptime T: type, allocator: std.mem.Allocator, bytes: []const 
     const owned = try allocator.alloc(T, n);
     @memcpy(std.mem.sliceAsBytes(owned), bytes);
     return .{ .slice = owned, .owned = owned };
+}
+
+fn copyG1(allocator: std.mem.Allocator, bytes: []const u8) ![]cpu.curve.G1PointAffine {
+    if (bytes.len % 64 != 0) return error.InvalidZkey;
+    const n = bytes.len / 64;
+    const points = try allocator.alloc(cpu.curve.G1PointAffine, n);
+    for (0..n) |i| {
+        const src = bytes[i * 64 ..][0..64];
+        points[i] = .{
+            .x = std.mem.bytesToValue(cpu.field.FqElement, src[0..32]),
+            .y = std.mem.bytesToValue(cpu.field.FqElement, src[32..64]),
+        };
+    }
+    return points;
+}
+
+fn checkProofMsms(
+    allocator: std.mem.Allocator,
+    points_a: []const u8,
+    points_b1: []const u8,
+    points_c: []const u8,
+    points_h: []const u8,
+    g2_points: []const cpu.curve.G2PointAffine,
+    scalars: []const cpu.field.FrElement,
+    n_public: u32,
+    h_gpu: []const cpu.field.FrElement,
+    qap_a: []const cpu.field.FrElement,
+    qap_b: []const cpu.field.FrElement,
+    qap_c: []const cpu.field.FrElement,
+    domain: u32,
+    pi_a: cpu.curve.G1Point,
+    pib1: cpu.curve.G1Point,
+    pi_c: cpu.curve.G1Point,
+    pi_b: cpu.curve.G2Point,
+    pih: cpu.curve.G1Point,
+) !void {
+    const h_cpu = try calculateHGpuCpu(allocator, qap_a, qap_b, qap_c, domain, 32);
+    defer allocator.free(h_cpu);
+    var h_diff: usize = 0;
+    const h_n = @min(h_cpu.len, h_gpu.len);
+    for (h_cpu[0..h_n], h_gpu[0..h_n]) |c, g| {
+        if (!cpu.field.fr_eq(c, g)) h_diff += 1;
+    }
+    std.debug.print("PROVER_CHECK H gpu_len={d} cpu_len={d} mismatches={d}\n", .{ h_gpu.len, h_cpu.len, h_diff });
+
+    const a_pts = try copyG1(allocator, points_a);
+    defer allocator.free(a_pts);
+    const b_pts = try copyG1(allocator, points_b1);
+    defer allocator.free(b_pts);
+    const h_pts = try copyG1(allocator, points_h);
+    defer allocator.free(h_pts);
+
+    const cpu_a = try cpu.msm.msm_g1(allocator, a_pts, scalars);
+    const cpu_b1 = try cpu.msm.msm_g1(allocator, b_pts, scalars);
+    const cpu_b2 = try cpu.msm.msm_g2(allocator, g2_points, scalars);
+    const cpu_h = try cpu.msm.msm_g1(allocator, h_pts, h_cpu);
+    std.debug.print("PROVER_CHECK pi_a {s} pib1 {s} pi_b {s} pih {s}\n", .{
+        if (cpu.curve.g1_eq(cpu_a, pi_a)) "ok" else "MISMATCH",
+        if (cpu.curve.g1_eq(cpu_b1, pib1)) "ok" else "MISMATCH",
+        if (cpu.curve.g2_eq(cpu_b2, pi_b)) "ok" else "MISMATCH",
+        if (cpu.curve.g1_eq(cpu_h, pih)) "ok" else "MISMATCH",
+    });
+    if (points_c.len > 0) {
+        const c_pts = try copyG1(allocator, points_c);
+        defer allocator.free(c_pts);
+        const priv_start: usize = @intCast(n_public + 1);
+        if (priv_start < scalars.len and c_pts.len == scalars.len - priv_start) {
+            const cpu_c = try cpu.msm.msm_g1(allocator, c_pts, scalars[priv_start..]);
+            std.debug.print("PROVER_CHECK pi_c {s}\n", .{if (cpu.curve.g1_eq(cpu_c, pi_c)) "ok" else "MISMATCH"});
+        } else {
+            std.debug.print("PROVER_CHECK pi_c skip c_pts={d} scalars={d} priv_start={d}\n", .{ c_pts.len, scalars.len, priv_start });
+        }
+    }
 }
 
 fn proveOnGpuInternal(
@@ -3409,6 +3490,19 @@ fn proveOnGpuInternal(
     stage_times[1] = getTimeMs() - t0;
     t0 = getTimeMs();
 
+    if (prefersCpu(domainSize)) {
+        var result = try cpu.prover.prove(allocator, zkey_data, witness_data, .{
+            .r = options.r,
+            .s = options.s,
+        });
+        defer result.deinit(allocator);
+        if (profile) std.debug.print("CPU prover: domain {d}\n", .{domainSize});
+        return cpu.ProofResult{
+            .proof = try allocator.dupe(u8, result.proof_json),
+            .public_signals = try allocator.dupe(u8, result.public_json),
+        };
+    }
+
     // QAP starts below, overlapped with the G1 MSMs. Stage 3 is filled when it finishes.
     stage_times[2] = 0;
 
@@ -3418,7 +3512,7 @@ fn proveOnGpuInternal(
 
     const fr_bytes = @sizeOf(cpu.field.FrElement);
     if (wtns.data.len < nVars * fr_bytes) return error.InvalidWitness;
-    
+
     const witness_bytes = wtns.data[0 .. nVars * fr_bytes];
     const n_private = if (nVars > nPublic + 1) nVars - nPublic - 1 else 0;
     stage_times[3] = getTimeMs() - t0;
@@ -3571,9 +3665,15 @@ fn proveOnGpuInternal(
         err: ?anyerror = null,
 
         fn run(ctx: *@This()) void {
-            ctx.sorted_full = mod.preprocessSortedWindows(ctx.allocator, ctx.witness_bytes, 8) catch |e| { ctx.err = e; return; };
+            ctx.sorted_full = mod.preprocessSortedWindows(ctx.allocator, ctx.witness_bytes, 8) catch |e| {
+                ctx.err = e;
+                return;
+            };
             if (ctx.private_bytes) |priv| {
-                ctx.sorted_private = mod.preprocessSortedWindows(ctx.allocator, priv, 8) catch |e| { ctx.err = e; return; };
+                ctx.sorted_private = mod.preprocessSortedWindows(ctx.allocator, priv, 8) catch |e| {
+                    ctx.err = e;
+                    return;
+                };
             }
         }
     };
@@ -3594,13 +3694,28 @@ fn proveOnGpuInternal(
             const n_points = ctx.points_b2.len / @sizeOf(cpu.curve.G2PointAffine);
             const fq_size = @sizeOf([4]u64);
 
-            ctx.x_c0 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| { ctx.err = e; return; };
-            ctx.x_c1 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| { ctx.err = e; return; };
-            ctx.y_c0 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| { ctx.err = e; return; };
-            ctx.y_c1 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| { ctx.err = e; return; };
+            ctx.x_c0 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| {
+                ctx.err = e;
+                return;
+            };
+            ctx.x_c1 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| {
+                ctx.err = e;
+                return;
+            };
+            ctx.y_c0 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| {
+                ctx.err = e;
+                return;
+            };
+            ctx.y_c1 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| {
+                ctx.err = e;
+                return;
+            };
 
             const points_b2_typed = std.mem.bytesAsSlice(cpu.curve.G2PointAffine, ctx.points_b2);
-            var negated_points_b2 = ctx.allocator.alloc(cpu.curve.G2PointAffine, n_points) catch |e| { ctx.err = e; return; };
+            var negated_points_b2 = ctx.allocator.alloc(cpu.curve.G2PointAffine, n_points) catch |e| {
+                ctx.err = e;
+                return;
+            };
             defer ctx.allocator.free(negated_points_b2);
             for (0..n_points) |i| {
                 negated_points_b2[i] = .{
@@ -3609,8 +3724,14 @@ fn proveOnGpuInternal(
                 };
             }
 
-            ctx.neg_y_c0 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| { ctx.err = e; return; };
-            ctx.neg_y_c1 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| { ctx.err = e; return; };
+            ctx.neg_y_c0 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| {
+                ctx.err = e;
+                return;
+            };
+            ctx.neg_y_c1 = ctx.allocator.alloc(u8, n_points * fq_size) catch |e| {
+                ctx.err = e;
+                return;
+            };
 
             const negated_bytes = std.mem.sliceAsBytes(negated_points_b2);
 
@@ -3786,6 +3907,7 @@ fn proveOnGpuInternal(
             t_h_start: f64,
             pih: ?cpu.curve.G1Point = null,
             h_calc_ms: f64 = 0,
+            saved_h: ?[]cpu.field.FrElement = null,
             err: ?anyerror = null,
 
             fn run(ctx: *@This()) void {
@@ -3794,19 +3916,37 @@ fn proveOnGpuInternal(
                     thread.join();
                     ctx.h_thread_ptr.* = null;
                 }
-                if (ctx.h_ctx_ptr.err) |e| { ctx.err = e; return; }
+                if (ctx.h_ctx_ptr.err) |e| {
+                    ctx.err = e;
+                    return;
+                }
                 ctx.h_calc_ms = getTimeMs() - ctx.t_h_start;
-                const h_coeffs = ctx.h_ctx_ptr.result orelse { ctx.err = error.HCalculationFailed; return; };
+                const h_coeffs = ctx.h_ctx_ptr.result orelse {
+                    ctx.err = error.HCalculationFailed;
+                    return;
+                };
                 defer ctx.allocator.free(h_coeffs);
+                if (std.c.getenv("PROVER_CHECK") != null) {
+                    ctx.saved_h = ctx.allocator.dupe(cpu.field.FrElement, h_coeffs) catch |e| {
+                        ctx.err = e;
+                        return;
+                    };
+                }
 
                 const h_bytes = std.mem.sliceAsBytes(h_coeffs);
-                const sorted_h_local = mod.preprocessSortedWindows(ctx.allocator, h_bytes, 8) catch |e| { ctx.err = e; return; };
+                const sorted_h_local = mod.preprocessSortedWindows(ctx.allocator, h_bytes, 8) catch |e| {
+                    ctx.err = e;
+                    return;
+                };
                 defer sorted_h_local.deinit(ctx.allocator);
 
                 const h_jobs = &[_]MetalProver.MSMJob{
                     .{ .points = ctx.points_h, .sorted = sorted_h_local },
                 };
-                const pih_results = ctx.prover.msmG1_v5_batch(h_jobs, ctx.prover.command_queue_2) catch |e| { ctx.err = e; return; };
+                const pih_results = ctx.prover.msmG1_v5_batch(h_jobs, ctx.prover.command_queue_2) catch |e| {
+                    ctx.err = e;
+                    return;
+                };
                 defer {
                     for (pih_results) |r| ctx.allocator.free(r);
                     ctx.allocator.free(pih_results);
@@ -3930,6 +4070,33 @@ fn proveOnGpuInternal(
         pib1 = accumulateG1(g1_nonh_results[1]);
         if (n_private > 0 and g1_nonh_results.len > 2) pi_c = accumulateG1(g1_nonh_results[2]);
         pih = q3_ctx.pih.?;
+        if (std.c.getenv("PROVER_CHECK") != null) {
+            if (q3_ctx.saved_h) |h_gpu| {
+                defer allocator.free(h_gpu);
+                q3_ctx.saved_h = null;
+                const qap_ready = qap_ctx.result orelse return error.HCalculationFailed;
+                checkProofMsms(
+                    allocator,
+                    points_a,
+                    points_b1,
+                    points_c,
+                    points_h,
+                    g2_points.slice,
+                    g2_scalars.slice,
+                    nPublic,
+                    h_gpu,
+                    qap_ready.a,
+                    qap_ready.b,
+                    qap_ready.c,
+                    domainSize,
+                    pi_a,
+                    pib1,
+                    pi_c,
+                    pi_b,
+                    pih,
+                ) catch |e| std.debug.print("PROVER_CHECK failed: {s}\n", .{@errorName(e)});
+            }
+        }
         const acc_ms = getTimeMs() - t_acc;
         stage_times[8] = getTimeMs() - t0;
         std.debug.print("MSM breakdown: accumulate={d:.2}ms, total={d:.2}ms, qap={d:.0}ms, H={d:.0}ms\n", .{ acc_ms, stage_times[8], qap_ctx.elapsed_ms, q3_ctx.h_calc_ms });
@@ -3983,7 +4150,7 @@ fn proveOnGpuInternal(
         std.debug.print("\n=== Metal Prover Stage Breakdown (ms) ===\n", .{});
         var total: f64 = 0;
         for (labels, stage_times, 0..) |label, t, i| {
-            std.debug.print("  [{d:>2}] {s:<22} {d:>8.2} ms\n", .{i+1, label, t});
+            std.debug.print("  [{d:>2}] {s:<22} {d:>8.2} ms\n", .{ i + 1, label, t });
             total += t;
         }
         std.debug.print("  Total: {d:.2} ms\n", .{total});
