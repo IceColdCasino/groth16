@@ -311,7 +311,7 @@ pub fn build(b: *std.Build) void {
     const zkey_exe = b.addExecutable(.{
         .name = "zkey",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("zkey/src/main.zig"),
+            .root_source_file = b.path("src/zkey/main.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
@@ -319,7 +319,7 @@ pub fn build(b: *std.Build) void {
     });
     if (is_macos) {
         zkey_exe.root_module.addCSourceFile(.{
-            .file = b.path("zkey/src/metal_host.m"),
+            .file = b.path("src/zkey/metal_host.m"),
             .flags = &.{"-fobjc-arc"},
             .language = .objective_c,
         });
@@ -327,7 +327,7 @@ pub fn build(b: *std.Build) void {
         zkey_exe.root_module.linkFramework("Foundation", .{});
 
         const zkey_air_cmd = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metal", "-O2", "-c" });
-        zkey_air_cmd.addFileArg(b.path("zkey/src/bn254.metal"));
+        zkey_air_cmd.addFileArg(b.path("src/zkey/bn254.metal"));
         zkey_air_cmd.addArg("-o");
         const zkey_air = zkey_air_cmd.addOutputFileArg("bn254.air");
         const zkey_metallib_cmd = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib" });
@@ -338,7 +338,7 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&install_zkey_metallib.step);
     } else {
         zkey_exe.root_module.addCSourceFile(.{
-            .file = b.path("zkey/src/metal_stub.c"),
+            .file = b.path("src/zkey/metal_stub.c"),
             .language = .c,
         });
     }
@@ -346,7 +346,7 @@ pub fn build(b: *std.Build) void {
 
     const zkey_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("zkey/src/tests.zig"),
+            .root_source_file = b.path("src/zkey/tests.zig"),
             .target = target,
             .optimize = optimize,
         }),

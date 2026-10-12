@@ -22,6 +22,5 @@
         "benchmarks",
         "testdata",
         "include",
-        "zkey",
     },
 }
