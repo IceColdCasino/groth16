@@ -8,7 +8,7 @@ class Zkey < Formula
   on_macos do
     on_arm do
       url "https://github.com/IceColdCasino/groth16/releases/download/v0.1.0/groth16-0.1.0-macos-aarch64.tar.gz"
-      sha256 "47ee9ded77d534dc314dc491ec1df1018c245679f9e7e29cc01f37e6bc543acc"
+      sha256 "ce2ec9fb03bac9d5fb239a9e40c910603ee1f98acda222ededc46a4989c5df0d"
     end
   end
 
