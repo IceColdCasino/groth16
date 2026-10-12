@@ -1,14 +1,14 @@
 class Zkey < Formula
   desc "Groth16 proving-key setup and prove/verify library"
   homepage "https://github.com/IceColdCasino/groth16"
-  version "0.1.0"
+  version "0.2.0"
   head "https://github.com/IceColdCasino/groth16.git", branch: "main"
 
   # Apple Silicon archive published by the macOS release workflow.
   on_macos do
     on_arm do
-      url "https://github.com/IceColdCasino/groth16/releases/download/v0.1.0/groth16-0.1.0-macos-aarch64.tar.gz"
-      sha256 "ce2ec9fb03bac9d5fb239a9e40c910603ee1f98acda222ededc46a4989c5df0d"
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.2.0/groth16-0.2.0-macos-aarch64.tar.gz"
+      sha256 "29eb201d4dc1c410c918a76e2bfbd181995b7a96656697541ae485c259892c40"
     end
   end
 
@@ -67,7 +67,7 @@ class Zkey < Formula
         elsif build.head?
           "Vulkan is off. Rebuild with --HEAD --with-vulkan to add glslang and MoltenVK."
         else
-          "Installed from the 0.1.0 Apple Silicon release. Vulkan is off in that archive."
+          "Installed from the 0.2.0 Apple Silicon release. Vulkan is off in that archive."
         end}
     EOS
   end
