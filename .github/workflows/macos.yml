@@ -13,8 +13,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: brew install zig
+      - name: Install Zig 0.17.0
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) zarch=aarch64 ;;
+            x86_64) zarch=x86_64 ;;
+            *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+          esac
+          url="https://ziglang.org/download/0.17.0/zig-${zarch}-macos-0.17.0.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/zig.tar.xz" "$url"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          test "$("$RUNNER_TEMP/zig/zig" version)" = "0.17.0"
 
       - name: Test libgroth16
         run: |

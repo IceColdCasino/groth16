@@ -12,6 +12,8 @@ const testdata = @import("testdata");
 // ============================================================================
 
 test "TDD: Vulkan msmG2_v6 pi_b matches CPU msm_g2_small" {
+    if (!gpu.vulkan_enabled) return;
+
     const allocator = std.testing.allocator;
 
     var prover = vulkan.VulkanProver.init(allocator) catch |e| {

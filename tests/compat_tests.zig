@@ -60,6 +60,9 @@ test {
 
 
 test "print medium circuit info" {
+    // The medium zkey is a local benchmark fixture and is not in the repo.
+    if (std.c.access("benchmarks/circuits/medium/circuit_final.zkey", 0) != 0) return error.SkipZigTest;
+
     const zkey_data = try cpu.readFileToBuffer("benchmarks/circuits/medium/circuit_final.zkey", std.testing.allocator);
     defer std.testing.allocator.free(zkey_data);
     var zkey = try cpu.parser.parseZkey(std.testing.allocator, zkey_data);
