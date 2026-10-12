@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: brew install glslang molten-vk zig
+        run: brew install zig
 
       - name: Test libgroth16
         run: |

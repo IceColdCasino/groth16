@@ -3,13 +3,22 @@ class Zkey < Formula
   homepage "https://github.com/IceColdCasino/groth16"
   head "https://github.com/IceColdCasino/groth16.git", branch: "main"
 
-  depends_on "glslang" => :build
+  option "with-vulkan", "Build the Vulkan backend with glslang and MoltenVK"
+
   depends_on "zig" => :build
-  depends_on "molten-vk"
+  depends_on "glslang" => :build if build.with?("vulkan")
+  depends_on "molten-vk" if build.with?("vulkan")
   depends_on macos: :sonoma
 
+  on_macos do
+    depends_on xcode: :build
+  end
+
   def install
-    system "zig", "build", "-Doptimize=ReleaseFast"
+    args = ["-Doptimize=ReleaseFast"]
+    args << "-Dvulkan=true" if build.with?("vulkan")
+
+    system "zig", "build", *args
     system "zig", "build", "-Doptimize=ReleaseFast", chdir: "zkey-setup"
 
     bin.install "zkey-setup/zig-out/bin/zkey"
@@ -33,6 +42,11 @@ class Zkey < Formula
         -L#{opt_lib} -lgroth16 -I#{opt_include}
 
       `zkey lib` prints the library path and those flags.
+      #{if build.with?("vulkan")
+          "Vulkan is enabled."
+        else
+          "Vulkan is off. Rebuild with --with-vulkan to add glslang and MoltenVK."
+        end}
     EOS
   end
 

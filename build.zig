@@ -11,9 +11,20 @@ fn moltenVkRoot() []const u8 {
     return candidates[0];
 }
 
+fn linkVulkan(module: *std.Build.Module, enable: bool, macos: bool, lib_path: []const u8) void {
+    if (!enable) return;
+    if (macos) {
+        module.addLibraryPath(.{ .cwd_relative = lib_path });
+        module.linkSystemLibrary("MoltenVK", .{});
+    } else {
+        module.linkSystemLibrary("vulkan", .{});
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const enable_vulkan = b.option(bool, "vulkan", "Build the Vulkan backend (glslang and a Vulkan loader)") orelse false;
     const molten_vk_root = moltenVkRoot();
     const molten_vk_lib = b.fmt("{s}/lib", .{molten_vk_root});
     const molten_vk_include = b.fmt("{s}/libexec/include", .{molten_vk_root});
@@ -25,13 +36,6 @@ pub fn build(b: *std.Build) void {
     });
     const c_module = host_c.createModule();
 
-    const vk_c = b.addTranslateC(.{
-        .root_source_file = b.path("include/vulkan_import.h"),
-        .target = target,
-        .optimize = optimize,
-    });
-    vk_c.addIncludePath(.{ .cwd_relative = molten_vk_include });
-    const vk_module = vk_c.createModule();
     const is_macos = target.result.os.tag == .macos;
     const is_native = target.result.os.tag == @import("builtin").os.tag;
 
@@ -91,7 +95,9 @@ pub fn build(b: *std.Build) void {
         metal_check_step = &metal_compile_check.step;
     }
 
-    // SPIR-V shader compilation (Vulkan compute backend)
+    // SPIR-V shader compilation (Vulkan compute backend). Off unless -Dvulkan=true.
+    var spirv_module: ?*std.Build.Module = null;
+    if (enable_vulkan) {
     const spirv_msm_g1_br = b.addSystemCommand(&.{
         "glslangValidator", "-V", "--target-env", "vulkan1.2",
         "-Isrc/shaders/spirv",
@@ -136,13 +142,14 @@ pub fn build(b: *std.Build) void {
         \\pub const MSM_G2_V6_WINDOW_REDUCE = @embedFile("msm_g2_v6_window_reduce.spv");
         \\
     );
-    const spirv_module = b.addModule("spirv", .{
+    spirv_module = b.addModule("spirv", .{
         .root_source_file = spirv_zig,
     });
-    spirv_module.addAnonymousImport("msm_g1_v5_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g1_br_spv });
-    spirv_module.addAnonymousImport("msm_g1_v5_window_reduce.spv", .{ .root_source_file = spirv_msm_g1_wr_spv });
-    spirv_module.addAnonymousImport("msm_g2_v6_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g2_br_spv });
-    spirv_module.addAnonymousImport("msm_g2_v6_window_reduce.spv", .{ .root_source_file = spirv_msm_g2_wr_spv });
+    spirv_module.?.addAnonymousImport("msm_g1_v5_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g1_br_spv });
+    spirv_module.?.addAnonymousImport("msm_g1_v5_window_reduce.spv", .{ .root_source_file = spirv_msm_g1_wr_spv });
+    spirv_module.?.addAnonymousImport("msm_g2_v6_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g2_br_spv });
+    spirv_module.?.addAnonymousImport("msm_g2_v6_window_reduce.spv", .{ .root_source_file = spirv_msm_g2_wr_spv });
+    }
 
     const testdata_module = b.addModule("testdata", .{
         .root_source_file = b.path("testdata/testdata.zig"),
@@ -155,12 +162,23 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     gpu_module.addImport("c", c_module);
-    gpu_module.addImport("vk", vk_module);
     gpu_module.addImport("e_jerk_gpu", e_jerk_gpu_module);
     gpu_module.addImport("zig-metal", zig_metal_module);
     gpu_module.addImport("cpu", cpu_module);
-    gpu_module.addImport("spirv", spirv_module);
-    gpu_module.addIncludePath(.{ .cwd_relative = molten_vk_include });
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "vulkan", enable_vulkan);
+    gpu_module.addOptions("build_options", build_options);
+    if (enable_vulkan) {
+        const vk_c = b.addTranslateC(.{
+            .root_source_file = b.path("include/vulkan_import.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        vk_c.addIncludePath(.{ .cwd_relative = molten_vk_include });
+        gpu_module.addImport("vk", vk_c.createModule());
+        gpu_module.addImport("spirv", spirv_module.?);
+        gpu_module.addIncludePath(.{ .cwd_relative = molten_vk_include });
+    }
     if (metal_shader_module) |msm| {
         gpu_module.addImport("metal_shader", msm);
     }
@@ -189,10 +207,10 @@ pub fn build(b: *std.Build) void {
             lib.root_module.linkFramework("Metal", .{});
             lib.root_module.linkFramework("QuartzCore", .{});
             // Also link MoltenVK on macOS when building natively
-            lib.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-            lib.root_module.linkSystemLibrary("MoltenVK", .{});
+            linkVulkan(lib.root_module, enable_vulkan, is_macos, molten_vk_lib);
         } else {
             lib.root_module.linkSystemLibrary("pthread", .{});
+            linkVulkan(lib.root_module, enable_vulkan, is_macos, molten_vk_lib);
         }
     }
 
@@ -221,10 +239,10 @@ pub fn build(b: *std.Build) void {
             dylib.root_module.linkFramework("Foundation", .{});
             dylib.root_module.linkFramework("Metal", .{});
             dylib.root_module.linkFramework("QuartzCore", .{});
-            dylib.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-            dylib.root_module.linkSystemLibrary("MoltenVK", .{});
+            linkVulkan(dylib.root_module, enable_vulkan, is_macos, molten_vk_lib);
         } else {
             dylib.root_module.linkSystemLibrary("pthread", .{});
+            linkVulkan(dylib.root_module, enable_vulkan, is_macos, molten_vk_lib);
         }
     }
 
@@ -254,10 +272,10 @@ pub fn build(b: *std.Build) void {
             exe.root_module.linkFramework("Metal", .{});
             exe.root_module.linkFramework("QuartzCore", .{});
             // Also link MoltenVK on macOS when building natively
-            exe.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-            exe.root_module.linkSystemLibrary("MoltenVK", .{});
+            linkVulkan(exe.root_module, enable_vulkan, is_macos, molten_vk_lib);
         } else {
             exe.root_module.linkSystemLibrary("pthread", .{});
+            linkVulkan(exe.root_module, enable_vulkan, is_macos, molten_vk_lib);
         }
     }
 
@@ -283,8 +301,7 @@ pub fn build(b: *std.Build) void {
         unit_tests.root_module.linkFramework("Foundation", .{});
         unit_tests.root_module.linkFramework("Metal", .{});
         unit_tests.root_module.linkFramework("QuartzCore", .{});
-        unit_tests.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        unit_tests.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(unit_tests.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
@@ -330,8 +347,7 @@ pub fn build(b: *std.Build) void {
         bench.root_module.linkFramework("Foundation", .{});
         bench.root_module.linkFramework("Metal", .{});
         bench.root_module.linkFramework("QuartzCore", .{});
-        bench.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        bench.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(bench.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
 
     const run_bench = b.addRunArtifact(bench);
@@ -357,8 +373,7 @@ pub fn build(b: *std.Build) void {
         bench_medium.root_module.linkFramework("Foundation", .{});
         bench_medium.root_module.linkFramework("Metal", .{});
         bench_medium.root_module.linkFramework("QuartzCore", .{});
-        bench_medium.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        bench_medium.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(bench_medium.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     const run_bench_medium = b.addRunArtifact(bench_medium);
     const bench_medium_step = b.step("bench-medium", "Run medium circuit benchmark");
@@ -381,10 +396,10 @@ pub fn build(b: *std.Build) void {
             window_preprocess_bench.root_module.linkFramework("Foundation", .{});
             window_preprocess_bench.root_module.linkFramework("Metal", .{});
             window_preprocess_bench.root_module.linkFramework("QuartzCore", .{});
-            window_preprocess_bench.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-            window_preprocess_bench.root_module.linkSystemLibrary("MoltenVK", .{});
+            linkVulkan(window_preprocess_bench.root_module, enable_vulkan, is_macos, molten_vk_lib);
         } else {
             window_preprocess_bench.root_module.linkSystemLibrary("pthread", .{});
+            linkVulkan(window_preprocess_bench.root_module, enable_vulkan, is_macos, molten_vk_lib);
         }
     }
     window_preprocess_bench.root_module.link_libc = true;
@@ -413,8 +428,7 @@ pub fn build(b: *std.Build) void {
         metal_fq_mul_test.root_module.linkFramework("Foundation", .{});
         metal_fq_mul_test.root_module.linkFramework("Metal", .{});
         metal_fq_mul_test.root_module.linkFramework("QuartzCore", .{});
-        metal_fq_mul_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        metal_fq_mul_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(metal_fq_mul_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     metal_fq_mul_test.root_module.link_libc = true;
     b.installArtifact(metal_fq_mul_test);
@@ -435,8 +449,7 @@ pub fn build(b: *std.Build) void {
         metal_mul128_test.root_module.linkFramework("Foundation", .{});
         metal_mul128_test.root_module.linkFramework("Metal", .{});
         metal_mul128_test.root_module.linkFramework("QuartzCore", .{});
-        metal_mul128_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        metal_mul128_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(metal_mul128_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     metal_mul128_test.root_module.link_libc = true;
     b.installArtifact(metal_mul128_test);
@@ -457,8 +470,7 @@ pub fn build(b: *std.Build) void {
         metal_add128_test.root_module.linkFramework("Foundation", .{});
         metal_add128_test.root_module.linkFramework("Metal", .{});
         metal_add128_test.root_module.linkFramework("QuartzCore", .{});
-        metal_add128_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        metal_add128_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(metal_add128_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     metal_add128_test.root_module.link_libc = true;
     b.installArtifact(metal_add128_test);
@@ -479,8 +491,7 @@ pub fn build(b: *std.Build) void {
         metal_mul128_direct_test.root_module.linkFramework("Foundation", .{});
         metal_mul128_direct_test.root_module.linkFramework("Metal", .{});
         metal_mul128_direct_test.root_module.linkFramework("QuartzCore", .{});
-        metal_mul128_direct_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        metal_mul128_direct_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(metal_mul128_direct_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     metal_mul128_direct_test.root_module.link_libc = true;
     b.installArtifact(metal_mul128_direct_test);
@@ -503,8 +514,7 @@ pub fn build(b: *std.Build) void {
         fft_tile1024_debug_test.root_module.linkFramework("Foundation", .{});
         fft_tile1024_debug_test.root_module.linkFramework("Metal", .{});
         fft_tile1024_debug_test.root_module.linkFramework("QuartzCore", .{});
-        fft_tile1024_debug_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        fft_tile1024_debug_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(fft_tile1024_debug_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     fft_tile1024_debug_test.root_module.link_libc = true;
     b.installArtifact(fft_tile1024_debug_test);
@@ -527,8 +537,7 @@ pub fn build(b: *std.Build) void {
         fft_hierarchical_test.root_module.linkFramework("Foundation", .{});
         fft_hierarchical_test.root_module.linkFramework("Metal", .{});
         fft_hierarchical_test.root_module.linkFramework("QuartzCore", .{});
-        fft_hierarchical_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        fft_hierarchical_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(fft_hierarchical_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     fft_hierarchical_test.root_module.link_libc = true;
     b.installArtifact(fft_hierarchical_test);
@@ -551,8 +560,7 @@ pub fn build(b: *std.Build) void {
         fft_global_stage_test.root_module.linkFramework("Foundation", .{});
         fft_global_stage_test.root_module.linkFramework("Metal", .{});
         fft_global_stage_test.root_module.linkFramework("QuartzCore", .{});
-        fft_global_stage_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        fft_global_stage_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(fft_global_stage_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     fft_global_stage_test.root_module.link_libc = true;
     b.installArtifact(fft_global_stage_test);
@@ -575,8 +583,7 @@ pub fn build(b: *std.Build) void {
         fft_4step_test.root_module.linkFramework("Foundation", .{});
         fft_4step_test.root_module.linkFramework("Metal", .{});
         fft_4step_test.root_module.linkFramework("QuartzCore", .{});
-        fft_4step_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        fft_4step_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(fft_4step_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     fft_4step_test.root_module.link_libc = true;
     b.installArtifact(fft_4step_test);
@@ -599,8 +606,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_test.root_module.linkFramework("Foundation", .{});
         gpu_ifft_test.root_module.linkFramework("Metal", .{});
         gpu_ifft_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_ifft_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_ifft_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_ifft_test.root_module.link_libc = true;
     b.installArtifact(gpu_ifft_test);
@@ -622,8 +628,7 @@ pub fn build(b: *std.Build) void {
         metal_throughput_bench.root_module.linkFramework("Foundation", .{});
         metal_throughput_bench.root_module.linkFramework("Metal", .{});
         metal_throughput_bench.root_module.linkFramework("QuartzCore", .{});
-        metal_throughput_bench.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        metal_throughput_bench.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(metal_throughput_bench.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     metal_throughput_bench.root_module.link_libc = true;
     b.installArtifact(metal_throughput_bench);
@@ -647,8 +652,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_rt_test.root_module.linkFramework("Foundation", .{});
         gpu_ifft_rt_test.root_module.linkFramework("Metal", .{});
         gpu_ifft_rt_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_rt_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_ifft_rt_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_ifft_rt_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_ifft_rt_test.root_module.link_libc = true;
     b.installArtifact(gpu_ifft_rt_test);
@@ -671,8 +675,7 @@ pub fn build(b: *std.Build) void {
         gpu_fft_1024_test.root_module.linkFramework("Foundation", .{});
         gpu_fft_1024_test.root_module.linkFramework("Metal", .{});
         gpu_fft_1024_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_fft_1024_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_fft_1024_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_fft_1024_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_fft_1024_test.root_module.link_libc = true;
     b.installArtifact(gpu_fft_1024_test);
@@ -710,8 +713,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_small_test.root_module.linkFramework("Foundation", .{});
         gpu_ifft_small_test.root_module.linkFramework("Metal", .{});
         gpu_ifft_small_test.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_small_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_ifft_small_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_ifft_small_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_ifft_small_test.root_module.link_libc = true;
     b.installArtifact(gpu_ifft_small_test);
@@ -734,8 +736,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_trace.root_module.linkFramework("Foundation", .{});
         gpu_ifft_trace.root_module.linkFramework("Metal", .{});
         gpu_ifft_trace.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_trace.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_ifft_trace.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_ifft_trace.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_ifft_trace.root_module.link_libc = true;
     b.installArtifact(gpu_ifft_trace);
@@ -758,8 +759,7 @@ pub fn build(b: *std.Build) void {
         gpu_roundtrip_large.root_module.linkFramework("Foundation", .{});
         gpu_roundtrip_large.root_module.linkFramework("Metal", .{});
         gpu_roundtrip_large.root_module.linkFramework("QuartzCore", .{});
-        gpu_roundtrip_large.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_roundtrip_large.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_roundtrip_large.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_roundtrip_large.root_module.link_libc = true;
     b.installArtifact(gpu_roundtrip_large);
@@ -782,8 +782,7 @@ pub fn build(b: *std.Build) void {
         gpu_roundtrip_many.root_module.linkFramework("Foundation", .{});
         gpu_roundtrip_many.root_module.linkFramework("Metal", .{});
         gpu_roundtrip_many.root_module.linkFramework("QuartzCore", .{});
-        gpu_roundtrip_many.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_roundtrip_many.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_roundtrip_many.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_roundtrip_many.root_module.link_libc = true;
     b.installArtifact(gpu_roundtrip_many);
@@ -806,8 +805,7 @@ pub fn build(b: *std.Build) void {
         gpu_fft_only.root_module.linkFramework("Foundation", .{});
         gpu_fft_only.root_module.linkFramework("Metal", .{});
         gpu_fft_only.root_module.linkFramework("QuartzCore", .{});
-        gpu_fft_only.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_fft_only.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_fft_only.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_fft_only.root_module.link_libc = true;
     b.installArtifact(gpu_fft_only);
@@ -830,8 +828,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_only.root_module.linkFramework("Foundation", .{});
         gpu_ifft_only.root_module.linkFramework("Metal", .{});
         gpu_ifft_only.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_only.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_ifft_only.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_ifft_only.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_ifft_only.root_module.link_libc = true;
     b.installArtifact(gpu_ifft_only);
@@ -869,8 +866,7 @@ pub fn build(b: *std.Build) void {
         twiddle_cache_check.root_module.linkFramework("Foundation", .{});
         twiddle_cache_check.root_module.linkFramework("Metal", .{});
         twiddle_cache_check.root_module.linkFramework("QuartzCore", .{});
-        twiddle_cache_check.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        twiddle_cache_check.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(twiddle_cache_check.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     twiddle_cache_check.root_module.link_libc = true;
     b.installArtifact(twiddle_cache_check);
@@ -893,8 +889,7 @@ pub fn build(b: *std.Build) void {
         gpu_ifft_old.root_module.linkFramework("Foundation", .{});
         gpu_ifft_old.root_module.linkFramework("Metal", .{});
         gpu_ifft_old.root_module.linkFramework("QuartzCore", .{});
-        gpu_ifft_old.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        gpu_ifft_old.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(gpu_ifft_old.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     gpu_ifft_old.root_module.link_libc = true;
     b.installArtifact(gpu_ifft_old);
@@ -917,8 +912,7 @@ pub fn build(b: *std.Build) void {
         tile_ifft_test.root_module.linkFramework("Foundation", .{});
         tile_ifft_test.root_module.linkFramework("Metal", .{});
         tile_ifft_test.root_module.linkFramework("QuartzCore", .{});
-        tile_ifft_test.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        tile_ifft_test.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(tile_ifft_test.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     tile_ifft_test.root_module.link_libc = true;
     b.installArtifact(tile_ifft_test);
@@ -941,8 +935,7 @@ pub fn build(b: *std.Build) void {
         tile_global_ifft.root_module.linkFramework("Foundation", .{});
         tile_global_ifft.root_module.linkFramework("Metal", .{});
         tile_global_ifft.root_module.linkFramework("QuartzCore", .{});
-        tile_global_ifft.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        tile_global_ifft.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(tile_global_ifft.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     tile_global_ifft.root_module.link_libc = true;
     b.installArtifact(tile_global_ifft);
@@ -965,8 +958,7 @@ pub fn build(b: *std.Build) void {
         calcH_pipeline.root_module.linkFramework("Foundation", .{});
         calcH_pipeline.root_module.linkFramework("Metal", .{});
         calcH_pipeline.root_module.linkFramework("QuartzCore", .{});
-        calcH_pipeline.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        calcH_pipeline.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(calcH_pipeline.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     calcH_pipeline.root_module.link_libc = true;
     b.installArtifact(calcH_pipeline);
@@ -989,8 +981,7 @@ pub fn build(b: *std.Build) void {
         calcH_many.root_module.linkFramework("Foundation", .{});
         calcH_many.root_module.linkFramework("Metal", .{});
         calcH_many.root_module.linkFramework("QuartzCore", .{});
-        calcH_many.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        calcH_many.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(calcH_many.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     calcH_many.root_module.link_libc = true;
     b.installArtifact(calcH_many);
@@ -1013,8 +1004,7 @@ pub fn build(b: *std.Build) void {
         bitreverse_large.root_module.linkFramework("Foundation", .{});
         bitreverse_large.root_module.linkFramework("Metal", .{});
         bitreverse_large.root_module.linkFramework("QuartzCore", .{});
-        bitreverse_large.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        bitreverse_large.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(bitreverse_large.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     bitreverse_large.root_module.link_libc = true;
     b.installArtifact(bitreverse_large);
@@ -1037,8 +1027,7 @@ pub fn build(b: *std.Build) void {
         ifftscale_large.root_module.linkFramework("Foundation", .{});
         ifftscale_large.root_module.linkFramework("Metal", .{});
         ifftscale_large.root_module.linkFramework("QuartzCore", .{});
-        ifftscale_large.root_module.addLibraryPath(.{ .cwd_relative = molten_vk_lib });
-        ifftscale_large.root_module.linkSystemLibrary("MoltenVK", .{});
+        linkVulkan(ifftscale_large.root_module, enable_vulkan, is_macos, molten_vk_lib);
     }
     ifftscale_large.root_module.link_libc = true;
     b.installArtifact(ifftscale_large);

@@ -4,7 +4,10 @@ pub const e_jerk_gpu = @import("e_jerk_gpu");
 
 pub const metal = @import("metal.zig");
 
-pub const vulkan = @import("vulkan.zig");
+pub const vulkan = if (@import("build_options").vulkan)
+    @import("vulkan.zig")
+else
+    @import("vulkan_off.zig");
 
 pub const GpuCapabilities = e_jerk_gpu.GpuCapabilities;
 pub const AutoSelector = e_jerk_gpu.AutoSelector;

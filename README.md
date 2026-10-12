@@ -6,17 +6,15 @@ The default path runs Zig on the CPU and Metal on the GPU at the same time. Meas
 
 ## Install
 
-Zig 0.17, the Metal toolchain (Xcode), glslang, and MoltenVK.
-
-### Homebrew
+The formula depends on Zig 0.17. On macOS it also depends on Xcode, because Metal is part of the macOS build. glslang and MoltenVK are not installed unless you opt into the Vulkan backend. A Linux package is not available yet.
 
 ```sh
-brew install zig glslang molten-vk
-git clone https://github.com/IceColdCasino/groth16.git
-brew install --HEAD ./groth16/Formula/zkey.rb
+brew trust --tap IceColdCasino/groth16
+brew tap IceColdCasino/groth16 https://github.com/IceColdCasino/groth16
+brew install --HEAD icecoldcasino/groth16/zkey
 ```
 
-That installs:
+`brew install` builds from the tap and installs every dependency the formula requires. That install puts these files on disk:
 
 | File | Path |
 |---|---|
@@ -35,6 +33,12 @@ That installs:
 
 The first line is the only thing on stdout, so `zkey lib` can be used from a script.
 
+Vulkan is optional on every OS. This installs glslang and MoltenVK and passes `-Dvulkan=true`:
+
+```sh
+brew install --HEAD --with-vulkan icecoldcasino/groth16/zkey
+```
+
 ### From source
 
 ```sh
@@ -43,6 +47,8 @@ cd groth16
 zig build -Doptimize=ReleaseFast
 (cd zkey-setup && zig build -Doptimize=ReleaseFast --prefix "$PWD/../zig-out")
 ```
+
+That build uses Metal on macOS and does not call glslang or MoltenVK. Add `-Dvulkan=true` when those two are installed and you want the Vulkan backend.
 
 `zig-out/lib/libgroth16.dylib`, `zig-out/include/groth16.h`, and `zig-out/bin/zkey` are the same three artifacts. `zkey lib` resolves the library from the binary’s install prefix (`bin/../lib/libgroth16.dylib`).
 
