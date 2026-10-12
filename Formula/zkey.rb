@@ -33,10 +33,9 @@ class Zkey < Formula
       args << "-Dvulkan=true" if build.with?("vulkan")
 
       system "zig", "build", *args
-      system "zig", "build", "-Doptimize=ReleaseFast", chdir: "zkey-setup"
 
-      bin.install "zkey-setup/zig-out/bin/zkey"
-      bin.install "zkey-setup/zig-out/bin/bn254.metallib"
+      bin.install "zig-out/bin/zkey"
+      bin.install "zig-out/bin/bn254.metallib"
       bin.install "zig-out/bin/prover"
       lib.install "zig-out/lib/libgroth16.dylib"
       lib.install "zig-out/lib/libgroth16.a"

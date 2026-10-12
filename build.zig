@@ -307,6 +307,51 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const zkey_exe = b.addExecutable(.{
+        .name = "zkey",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zkey/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    if (is_macos) {
+        zkey_exe.root_module.addCSourceFile(.{
+            .file = b.path("zkey/src/metal_host.m"),
+            .flags = &.{"-fobjc-arc"},
+            .language = .objective_c,
+        });
+        zkey_exe.root_module.linkFramework("Metal", .{});
+        zkey_exe.root_module.linkFramework("Foundation", .{});
+
+        const zkey_air_cmd = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metal", "-O2", "-c" });
+        zkey_air_cmd.addFileArg(b.path("zkey/src/bn254.metal"));
+        zkey_air_cmd.addArg("-o");
+        const zkey_air = zkey_air_cmd.addOutputFileArg("bn254.air");
+        const zkey_metallib_cmd = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib" });
+        zkey_metallib_cmd.addFileArg(zkey_air);
+        zkey_metallib_cmd.addArg("-o");
+        const zkey_metallib = zkey_metallib_cmd.addOutputFileArg("bn254.metallib");
+        const install_zkey_metallib = b.addInstallBinFile(zkey_metallib, "bn254.metallib");
+        b.getInstallStep().dependOn(&install_zkey_metallib.step);
+    } else {
+        zkey_exe.root_module.addCSourceFile(.{
+            .file = b.path("zkey/src/metal_stub.c"),
+            .language = .c,
+        });
+    }
+    b.installArtifact(zkey_exe);
+
+    const zkey_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zkey/src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(zkey_tests).step);
     if (metal_check_step) |check| {
         test_step.dependOn(check);
     }

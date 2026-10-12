@@ -47,16 +47,12 @@ brew install --HEAD --with-vulkan icecoldcasino/groth16/zkey
 git clone https://github.com/IceColdCasino/groth16.git
 cd groth16
 zig build -Doptimize=ReleaseFast
-(cd zkey-setup && zig build -Doptimize=ReleaseFast --prefix "$PWD/../zig-out")
 ```
 
-That build uses Metal on macOS and does not call glslang or MoltenVK. Add `-Dvulkan=true` when those two are installed and you want the Vulkan backend.
-
-`zig-out/lib/libgroth16.dylib`, `zig-out/include/groth16.h`, and `zig-out/bin/zkey` are the same three artifacts. `zkey lib` resolves the library from the binary’s install prefix (`bin/../lib/libgroth16.dylib`).
+That build uses Metal on macOS and does not call glslang or MoltenVK. Add `-Dvulkan=true` when those two are installed and you want the Vulkan backend. It installs `zkey`, `prover`, `bn254.metallib`, `libgroth16`, and `groth16.h` into `zig-out`. `zkey lib` resolves the library from the binary’s install prefix (`bin/../lib/libgroth16.dylib`).
 
 ```sh
 zig build test -Doptimize=ReleaseFast
-(cd zkey-setup && zig build test -Doptimize=ReleaseFast)
 ```
 
 ## Link it where librapidsnark was
