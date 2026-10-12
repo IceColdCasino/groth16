@@ -6,19 +6,20 @@ The default path runs Zig on the CPU and Metal on the GPU at the same time. Meas
 
 ## Install
 
-The formula depends on Zig 0.17. On macOS it also depends on Xcode, because Metal is part of the macOS build. glslang and MoltenVK are not installed unless you opt into the Vulkan backend. A Linux package is not available yet.
+The stable formula downloads the Apple Silicon archive from the [0.1.0 GitHub release](https://github.com/IceColdCasino/groth16/releases/tag/v0.1.0). That install does not need Zig or Xcode. macOS 14 or newer is required. A Linux package is not available yet.
 
 ```sh
 brew trust --tap IceColdCasino/groth16
 brew tap IceColdCasino/groth16 https://github.com/IceColdCasino/groth16
-brew install --HEAD icecoldcasino/groth16/zkey
+brew install icecoldcasino/groth16/zkey
 ```
 
-`brew install` builds from the tap and installs every dependency the formula requires. That install puts these files on disk:
+`brew install` puts these files on disk:
 
 | File | Path |
 |---|---|
 | `zkey` | `$(brew --prefix zkey)/bin/zkey` |
+| `prover` | `$(brew --prefix zkey)/bin/prover` |
 | `bn254.metallib` | next to the `zkey` binary |
 | `libgroth16.dylib` | `$(brew --prefix zkey)/lib/libgroth16.dylib` |
 | `libgroth16.a` | `$(brew --prefix zkey)/lib/libgroth16.a` |
@@ -33,9 +34,10 @@ brew install --HEAD icecoldcasino/groth16/zkey
 
 The first line is the only thing on stdout, so `zkey lib` can be used from a script.
 
-Vulkan is optional on every OS. This installs glslang and MoltenVK and passes `-Dvulkan=true`:
+The 0.1.0 archive is the Metal build. `--HEAD` builds main with Zig 0.17 and Xcode. Add `--with-vulkan` on that path to install glslang and MoltenVK and pass `-Dvulkan=true`:
 
 ```sh
+brew install --HEAD icecoldcasino/groth16/zkey
 brew install --HEAD --with-vulkan icecoldcasino/groth16/zkey
 ```
 
