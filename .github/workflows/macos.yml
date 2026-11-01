@@ -87,7 +87,7 @@ jobs:
 
           \`libgroth16\` is a drop-in for librapidsnark: the same \`groth16_*\` C entry points, JSON proof and public inputs, and return codes. \`zkey\` is a drop-in for snarkjs zkey setup, contribute, and verification-key export. The default prove path runs Zig on the CPU and Metal on the GPU together. Circuits whose domain is 4096 or smaller stay on the Zig CPU prover.
 
-          The BN254 roots of unity from order 2^16 through 2^18 match the squaring chain. \`PROVER_CHECK=1\` compares the Metal H polynomial and multiscalar multiplies with the CPU.
+          Every proof draws fresh \`r\` and \`s\` from the operating system, as rapidsnark does. Through 0.2.0, a caller that passed no \`r\` and \`s\` got \`r = s = 0\`, and the C library never passed them, so every proof it made verified but was not zero-knowledge. Proofs from earlier releases still verify against the same keys. \`PROVER_CHECK=1\` compares the Metal H polynomial and multiscalar multiplies with the CPU.
 
           ### Archive
 
@@ -116,14 +116,14 @@ jobs:
 
           Blackjack showdown key setup and contribute: 31.32 s, compared with snarkjs at 340.69 s (10.9×). snarkjs on that key was 250.53 s of setup and 90.16 s of contribute.
 
-          Prove, witness from libzkcasino, \`r = s = 0\`, verified with snarkjs:
+          Prove, witness from libzkcasino, verified with snarkjs. These runs used \`r = s = 0\`:
 
           | Circuit | CPU + Metal | rapidsnark | speedup |
           |---|---:|---:|---:|
           | Blackjack showdown (661,104 signals) | 1.75 s | 3.28 s | 1.9× |
           | Poker showdown (2,244,633 signals) | 6.58 s | 10.02 s | 1.5× |
 
-          Proofs with \`r = s = 0\` verify. rapidsnark draws its own \`r\` and \`s\`, so those proof bytes differ. Sections 1–9 of the blackjack proving key match snarkjs. The exported verification key matches snarkjs. Smaller keys, including a coefficient-5 circuit proved with the Metal and CPU split, match snarkjs byte for byte.
+          Blinding adds six scalar multiplications to a proof, which is small next to the multiscalar multiplies. Sections 1–9 of the blackjack proving key match snarkjs. The exported verification key matches snarkjs. Smaller keys, including a coefficient-5 circuit proved with the Metal and CPU split, match snarkjs byte for byte.
           EOF
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \

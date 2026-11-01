@@ -119,3 +119,54 @@ test "cpu and metal provers match with same random r, s" {
     try std.testing.expect(cpu.curve.g2_eq(cpu_proof.pi_b, metal_proof.pi_b));
     try std.testing.expect(cpu.curve.g1_eq(cpu_proof.pi_c, metal_proof.pi_c));
 }
+
+test "cpu prover draws fresh r, s by default" {
+    const allocator = std.testing.allocator;
+
+    var first = try cpu.prover.prove(allocator, testdata.ZKEY, testdata.WTNS, .{});
+    defer first.deinit(allocator);
+    var second = try cpu.prover.prove(allocator, testdata.ZKEY, testdata.WTNS, .{});
+    defer second.deinit(allocator);
+
+    const first_proof = try cpu.verifier.parseProof(allocator, first.proof_json);
+    const second_proof = try cpu.verifier.parseProof(allocator, second.proof_json);
+    try std.testing.expect(!cpu.curve.g1_eq(first_proof.pi_a, second_proof.pi_a));
+    try std.testing.expect(!cpu.curve.g2_eq(first_proof.pi_b, second_proof.pi_b));
+    try std.testing.expectEqualStrings(first.public_json, second.public_json);
+
+    try std.testing.expect(try cpu.verifier.verify(allocator, testdata.VK, first.proof_json, first.public_json));
+    try std.testing.expect(try cpu.verifier.verify(allocator, testdata.VK, second.proof_json, second.public_json));
+}
+
+test "gpu entry point draws fresh r, s by default" {
+    if (@import("builtin").os.tag != .macos) return;
+
+    const allocator = std.testing.allocator;
+    const gpu = @import("gpu");
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile(std.testing.io, .{ .sub_path = "circuit_final.zkey", .data = testdata.ZKEY });
+    try tmp_dir.dir.writeFile(std.testing.io, .{ .sub_path = "witness.wtns", .data = testdata.WTNS });
+
+    const zkey_path_z = try tmp_dir.dir.realPathFileAlloc(std.testing.io, "circuit_final.zkey", allocator);
+    defer allocator.free(zkey_path_z);
+    const zkey_path = std.mem.sliceTo(zkey_path_z, 0);
+    const wtns_path_z = try tmp_dir.dir.realPathFileAlloc(std.testing.io, "witness.wtns", allocator);
+    defer allocator.free(wtns_path_z);
+    const wtns_path = std.mem.sliceTo(wtns_path_z, 0);
+
+    var first = try gpu.metal.proveOnGpu(zkey_path, wtns_path, .{});
+    defer first.deinit();
+    var second = try gpu.metal.proveOnGpu(zkey_path, wtns_path, .{});
+    defer second.deinit();
+
+    const first_proof = try cpu.verifier.parseProof(allocator, first.proof);
+    const second_proof = try cpu.verifier.parseProof(allocator, second.proof);
+    try std.testing.expect(!cpu.curve.g1_eq(first_proof.pi_a, second_proof.pi_a));
+    try std.testing.expect(!cpu.curve.g2_eq(first_proof.pi_b, second_proof.pi_b));
+
+    try std.testing.expect(try cpu.verifier.verify(allocator, testdata.VK, first.proof, first.public_signals));
+    try std.testing.expect(try cpu.verifier.verify(allocator, testdata.VK, second.proof, second.public_signals));
+}

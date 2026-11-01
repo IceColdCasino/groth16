@@ -73,7 +73,7 @@ pub fn assembleProof(
     const delta1 = readG1Affine(vk_data[n8q * 12 .. n8q * 14]);
     const delta2 = readG2Affine(vk_data[n8q * 14 .. n8q * 18]);
 
-    // Use provided r, s (caller controls randomization — CPU prover uses r=s=0)
+    // r and s must be fresh for every proof, or the proof leaks the witness.
 
     // 3. Randomization
     // pi_a = pi_a + alpha1 + r*delta1

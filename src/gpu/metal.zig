@@ -3267,6 +3267,8 @@ pub fn calculateHGpu(
 }
 
 pub const ProveOptions = struct {
+    /// Blinding scalars. Null draws fresh ones for each proof, which zero
+    /// knowledge requires. Pin them only to reproduce a reference proof.
     r: ?cpu.field.FrElement = null,
     s: ?cpu.field.FrElement = null,
 };
@@ -4118,8 +4120,8 @@ fn proveOnGpuInternal(
     t0 = getTimeMs();
 
     // 11. Assemble proof
-    const r = options.r orelse cpu.field.fr_zero();
-    const s = options.s orelse cpu.field.fr_zero();
+    const r = options.r orelse cpu.random.fr_random();
+    const s = options.s orelse cpu.random.fr_random();
     var asm_result = try cpu.assembler.assembleProof(allocator, zkey_data, witness_data, pi_a, pi_b, pib1, pi_c, pih, r, s);
     defer asm_result.deinit(allocator);
     stage_times[10] = getTimeMs() - t0;

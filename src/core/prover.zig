@@ -214,6 +214,8 @@ pub fn calculateH(
 // ============================================================================
 
 pub const ProveOptions = struct {
+    /// Blinding scalars. Null draws fresh ones for each proof, which zero
+    /// knowledge requires. Pin them only to reproduce a reference proof.
     r: ?field.FrElement = null,
     s: ?field.FrElement = null,
 };
@@ -310,10 +312,8 @@ pub fn prove(
 
     const pih = try msm.msm_g1(allocator, points_h, h_coeffs);
 
-
-    // Use provided r, s or default to zero for backward compatibility
-    const r = options.r orelse field.fr_zero();
-    const s = options.s orelse field.fr_zero();
+    const r = options.r orelse random.fr_random();
+    const s = options.s orelse random.fr_random();
     const r_mont = field.fr_toMont(r);
     const s_mont = field.fr_toMont(s);
     const rs = field.fr_fromMont(field.fr_mul(r_mont, s_mont));
@@ -389,7 +389,10 @@ test "compare proof with reference" {
     const ref_proof = try verifier.parseProof(std.testing.allocator, ref_proof_data);
     
     // Generate our proof
-    var our_result = try prove(std.testing.allocator, testdata.ZKEY, testdata.WTNS, .{});
+    var our_result = try prove(std.testing.allocator, testdata.ZKEY, testdata.WTNS, .{
+        .r = field.fr_zero(),
+        .s = field.fr_zero(),
+    });
     defer our_result.deinit(std.testing.allocator);
     
     // Parse our proof
