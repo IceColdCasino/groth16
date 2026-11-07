@@ -1,14 +1,26 @@
 class Zkey < Formula
   desc "Groth16 proving-key setup and prove/verify library"
   homepage "https://github.com/IceColdCasino/groth16"
-  version "0.2.1"
+  version "0.3.0"
   head "https://github.com/IceColdCasino/groth16.git", branch: "main"
 
-  # Apple Silicon archive published by the macOS release workflow.
+  # Published by the macOS and Linux release workflows. The macOS archive is Metal.
+  # The Linux archives compile in Vulkan and use it when a device is present.
   on_macos do
     on_arm do
-      url "https://github.com/IceColdCasino/groth16/releases/download/v0.2.1/groth16-0.2.1-macos-aarch64.tar.gz"
-      sha256 "b4d79b374e65fb572f2137a2ba7acea34484ec00b7ac31666f443e39555ad98e"
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-macos-aarch64.tar.gz"
+      sha256 :no_check
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-linux-x86_64.tar.gz"
+      sha256 :no_check
+    end
+    on_arm do
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-linux-aarch64.tar.gz"
+      sha256 :no_check
     end
   end
 
