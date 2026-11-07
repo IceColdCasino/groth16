@@ -43,7 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           prefix="${RUNNER_TEMP}/prefix"
-          zig build -Doptimize=ReleaseFast --prefix "$prefix"
+          # baseline, not the runner's native CPU, so the archive runs on every Apple Silicon Mac.
+          zig build -Doptimize=ReleaseFast -Dcpu=baseline --prefix "$prefix"
           test -x "$prefix/bin/zkey"
           test -x "$prefix/bin/prover"
           test -f "$prefix/bin/bn254.metallib"

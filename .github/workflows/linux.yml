@@ -46,7 +46,8 @@ jobs:
           set -euo pipefail
           zig version
           prefix="${RUNNER_TEMP}/prefix"
-          zig build -Doptimize=ReleaseFast -Dvulkan=true --prefix "$prefix"
+          # baseline, not the runner's native CPU. A native build SIGILLs on other GitHub hosts.
+          zig build -Doptimize=ReleaseFast -Dvulkan=true -Dcpu=baseline --prefix "$prefix"
           test -x "$prefix/bin/zkey"
           test -x "$prefix/bin/prover"
           test ! -e "$prefix/bin/bn254.metallib"

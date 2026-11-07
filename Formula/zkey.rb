@@ -9,18 +9,18 @@ class Zkey < Formula
   on_macos do
     on_arm do
       url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-macos-aarch64.tar.gz"
-      sha256 :no_check
+      sha256 "6e92f70adc3999c88ee3d9b39db677aa6f75f429d2baba824e050270affd305a"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-linux-x86_64.tar.gz"
-      sha256 :no_check
+      sha256 "eda470d0ee3c627a4072fa5d91db29450c78e05ee931bbe0697829725a23dbfc"
     end
     on_arm do
       url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-linux-aarch64.tar.gz"
-      sha256 :no_check
+      sha256 "fbaae9cb78d35a4d4158190f8fa3368282634244dd42c84cbc9e872dfe219e77"
     end
   end
 
