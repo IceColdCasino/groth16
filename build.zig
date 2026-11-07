@@ -1,12 +1,13 @@
 const std = @import("std");
 
-fn moltenVkRoot() []const u8 {
-    const candidates = [_][:0]const u8{
+fn moltenVkRoot(io: std.Io) []const u8 {
+    const candidates = [_][]const u8{
         "/opt/homebrew/opt/molten-vk",
         "/usr/local/opt/molten-vk",
     };
     for (candidates) |root| {
-        if (std.c.access(root.ptr, 0) == 0) return root;
+        std.Io.Dir.accessAbsolute(io, root, .{}) catch continue;
+        return root;
     }
     return candidates[0];
 }
@@ -23,7 +24,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const enable_vulkan = b.option(bool, "vulkan", "Compile Vulkan multiscalar multiplication. The loader is opened at runtime.") orelse false;
     const vulkan_include = b.option([]const u8, "vulkan-include", "Directory that contains vulkan/vulkan.h");
-    const molten_vk_root = moltenVkRoot();
+    const molten_vk_root = moltenVkRoot(b.graph.io);
     const molten_vk_lib = b.fmt("{s}/lib", .{molten_vk_root});
     const molten_vk_include = b.fmt("{s}/libexec/include", .{molten_vk_root});
 
