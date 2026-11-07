@@ -56,8 +56,7 @@ typedef struct {
 // 128-bit primitives
 // ---------------------------------------------------------------------------
 
-// Use native 64-bit multiply for much better GPU performance.
-// Metal provides mulhi() for the high 64 bits of a 128-bit product.
+// Native 64-bit multiply. The high half matches the schoolbook product in the Vulkan field shader.
 inline uint128_t mul128(uint64_t a, uint64_t b) {
     uint64_t lo = a * b;
     uint64_t hi = mulhi((ulong)a, (ulong)b);

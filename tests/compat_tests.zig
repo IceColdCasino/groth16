@@ -53,6 +53,9 @@ test {
     _ = @import("metal/tdd_metal.zig");
     _ = @import("vulkan/tdd_vulkan_msm_g1.zig");
     _ = @import("vulkan/tdd_vulkan_msm_g2.zig");
+    if (comptime @import("builtin").os.tag == .macos and @import("gpu").vulkan_enabled) {
+        _ = @import("gpu/tdd_metal_vulkan_msm.zig");
+    }
     _ = @import("msm/tdd_randomized.zig");
     _ = @import("msm/tdd_concurrent_msm.zig");
     _ = @import("prove/tdd_proof_serial_vs_concurrent.zig");

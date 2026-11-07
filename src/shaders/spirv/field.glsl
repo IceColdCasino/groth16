@@ -43,6 +43,7 @@ struct uint128_t {
 // 64-bit multiply high (manual 32-bit decomposition)
 // ---------------------------------------------------------------------------
 
+// 64x64->128 product. Metal uses mulhi for the high half; this is the same product.
 uint128_t mul128(uint64_t a, uint64_t b) {
     uint64_t a0 = a & 0xFFFFFFFFUL;
     uint64_t a1 = a >> 32;
