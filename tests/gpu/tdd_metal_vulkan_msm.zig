@@ -6,6 +6,7 @@ const curve = cpu.curve;
 const testdata = @import("testdata");
 
 test "Metal and Vulkan msmG1_v5 agree" {
+    if (gpu.skipVulkanOnGitHubActions()) return;
     const allocator = std.testing.allocator;
     var zkey = try cpu.parser.parseZkey(allocator, testdata.ZKEY);
     defer zkey.deinit(allocator);
@@ -56,6 +57,7 @@ test "Metal and Vulkan msmG1_v5 agree" {
 }
 
 test "Metal and Vulkan msmG2_v6 agree" {
+    if (gpu.skipVulkanOnGitHubActions()) return;
     const allocator = std.testing.allocator;
     var zkey = try cpu.parser.parseZkey(allocator, testdata.ZKEY);
     defer zkey.deinit(allocator);

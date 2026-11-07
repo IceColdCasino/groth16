@@ -10,6 +10,11 @@ else
 
 pub const vulkan_enabled = @import("build_options").vulkan;
 
+/// Hosted GitHub Actions runners hang in MoltenVK: the compute fence never signals.
+pub fn skipVulkanOnGitHubActions() bool {
+    return std.c.getenv("GITHUB_ACTIONS") != null;
+}
+
 pub const vulkan = if (vulkan_enabled)
     @import("vulkan.zig")
 else

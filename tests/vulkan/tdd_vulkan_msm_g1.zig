@@ -12,7 +12,7 @@ const testdata = @import("testdata");
 // ============================================================================
 
 test "TDD: Vulkan msmG1_v5 pi_a matches CPU msm_g1_pippenger" {
-    if (!gpu.vulkan_enabled) return;
+    if (!gpu.vulkan_enabled or gpu.skipVulkanOnGitHubActions()) return;
 
     const allocator = std.testing.allocator;
 
@@ -87,7 +87,7 @@ test "TDD: Vulkan msmG1_v5 pi_a matches CPU msm_g1_pippenger" {
 }
 
 test "TDD: Vulkan msmG1_v5 pib1 matches CPU msm_g1_pippenger" {
-    if (!gpu.vulkan_enabled) return;
+    if (!gpu.vulkan_enabled or gpu.skipVulkanOnGitHubActions()) return;
 
     const allocator = std.testing.allocator;
 

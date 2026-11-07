@@ -31,18 +31,13 @@ jobs:
           echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
           test "$("$RUNNER_TEMP/zig/zig" version)" = "0.17.0"
 
-      - name: Install MoltenVK and glslang
-        run: |
-          set -euo pipefail
-          export HOMEBREW_NO_AUTO_UPDATE=1
-          brew install glslang molten-vk
-
-      - name: Test Metal and Vulkan
+      - name: Test
         run: |
           set -euo pipefail
           zig version
-          # Vulkan is linked only for this test run. The release archive below stays on Metal.
-          zig build test -Doptimize=ReleaseFast -Dvulkan=true
+          # MoltenVK on this runner never signals the compute fence, so Vulkan stays off.
+          # Metal is what this job runs. Linux builds still compile Vulkan in.
+          zig build test -Doptimize=ReleaseFast
 
       - name: Build release artifacts
         run: |
