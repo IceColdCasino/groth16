@@ -1,8 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const e_jerk_gpu = @import("e_jerk_gpu");
 
-pub const metal = @import("metal.zig");
+pub const metal = if (builtin.os.tag == .macos)
+    @import("metal.zig")
+else
+    struct {};
 
 pub const vulkan_enabled = @import("build_options").vulkan;
 
@@ -451,10 +455,7 @@ pub fn preprocessUnsignedSortedWindows(allocator: std.mem.Allocator, scalars: []
 /// Lazily imports the Metal module so the Objective-C runtime is only
 /// required when this function is actually called.
 pub fn initMetalProver(allocator: std.mem.Allocator) !void {
-    if (@import("builtin").os.tag != .macos) {
-        return error.BackendNotAvailable;
-    }
-    const m = @import("metal.zig");
-    const prover = try m.MetalProver.init(allocator);
+    if (comptime builtin.os.tag != .macos) return error.BackendNotAvailable;
+    const prover = try metal.MetalProver.init(allocator);
     prover.deinit();
 }

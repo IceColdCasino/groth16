@@ -100,7 +100,9 @@ jobs:
           - \`lib/libgroth16.a\`
           - \`include/groth16.h\`
 
-          This archive is the Metal build. \`zkey lib\` prints the shared library path and the link flags. The library sits at \`bin/../lib/libgroth16.dylib\` relative to the \`zkey\` binary.
+          This archive is the Metal build. It does not include Vulkan. \`zkey lib\` prints the shared library path and the link flags. The library sits at \`bin/../lib/libgroth16.dylib\` relative to the \`zkey\` binary.
+
+          Linux x86_64 and aarch64 archives from this tag compile Vulkan in. Those builds use it for multiscalar multiplication when \`libvulkan.so.1\` and a compute device are present, and the CPU prover otherwise.
 
           \`\`\`sh
           brew trust --tap IceColdCasino/groth16
@@ -125,8 +127,12 @@ jobs:
 
           Blinding adds six scalar multiplications to a proof, which is small next to the multiscalar multiplies. Sections 1–9 of the blackjack proving key match snarkjs. The exported verification key matches snarkjs. Smaller keys, including a coefficient-5 circuit proved with the Metal and CPU split, match snarkjs byte for byte.
           EOF
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$version" \
-            --notes-file "${RUNNER_TEMP}/notes.md" \
-            "${RUNNER_TEMP}/${name}.tar.gz"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$version" --notes-file "${RUNNER_TEMP}/notes.md"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$version" \
+              --notes-file "${RUNNER_TEMP}/notes.md" || true
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${RUNNER_TEMP}/${name}.tar.gz"

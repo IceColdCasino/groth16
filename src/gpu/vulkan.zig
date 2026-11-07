@@ -893,6 +893,120 @@ pub fn accumulateG1(windows: []const mod.G1Point) cpu.curve.G1Point {
     return result;
 }
 
+var shared_prover: ?*VulkanProver = null;
+var shared_lock: std.atomic.Value(u32) = .init(0);
+
+fn lockShared() void {
+    while (shared_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+        std.Thread.yield() catch {};
+    }
+}
+
+fn unlockShared() void {
+    shared_lock.store(0, .release);
+}
+
+/// Open a Vulkan device once. False when the loader or a compute queue is missing.
+pub fn attach(allocator: std.mem.Allocator) bool {
+    lockShared();
+    defer unlockShared();
+    if (shared_prover != null) return true;
+    shared_prover = VulkanProver.init(allocator) catch return false;
+    return true;
+}
+
+const vulkan_msm_min: usize = 2048;
+
+fn msmConfig(n_points: u32) mod.MSMConfig {
+    return .{
+        .n_points = n_points,
+        .n_windows = 32,
+        .window_size = 8,
+        .n_buckets = 256,
+    };
+}
+
+/// G1 MSM used by the CPU prover when a Vulkan device is present.
+/// Fewer than 2048 points stays on the CPU; the GPU setup costs more than the multiply.
+pub fn msmG1Affine(
+    allocator: std.mem.Allocator,
+    points: []const cpu.curve.G1PointAffine,
+    scalars: []const cpu.field.FrElement,
+) !cpu.curve.G1Point {
+    lockShared();
+    defer unlockShared();
+    const prover = shared_prover orelse return error.VulkanNotFound;
+    if (points.len != scalars.len or points.len < vulkan_msm_min) return error.UseCpu;
+    const n_points = std.math.cast(u32, points.len) orelse return error.UseCpu;
+
+    const sorted = try mod.preprocessSortedWindows(allocator, std.mem.sliceAsBytes(scalars), 8);
+    defer sorted.deinit(allocator);
+
+    const fq: usize = 32;
+    const x_data = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(x_data);
+    const y_data = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(y_data);
+    const neg_y_data = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(neg_y_data);
+
+    for (points, 0..) |pt, i| {
+        @memcpy(x_data[i * fq ..][0..fq], std.mem.asBytes(&pt.x));
+        @memcpy(y_data[i * fq ..][0..fq], std.mem.asBytes(&pt.y));
+        const neg_y = cpu.field.fq_neg(pt.y);
+        @memcpy(neg_y_data[i * fq ..][0..fq], std.mem.asBytes(&neg_y));
+    }
+
+    const windows = try prover.msmG1_v5(x_data, y_data, neg_y_data, msmConfig(n_points), sorted.bucket_offsets, sorted.sorted_indices);
+    defer allocator.free(windows);
+    return accumulateG1(windows);
+}
+
+/// G2 MSM used by the CPU prover when a Vulkan device is present.
+pub fn msmG2Affine(
+    allocator: std.mem.Allocator,
+    points: []const cpu.curve.G2PointAffine,
+    scalars: []const cpu.field.FrElement,
+) !cpu.curve.G2Point {
+    lockShared();
+    defer unlockShared();
+    const prover = shared_prover orelse return error.VulkanNotFound;
+    if (points.len != scalars.len or points.len < vulkan_msm_min) return error.UseCpu;
+    const n_points = std.math.cast(u32, points.len) orelse return error.UseCpu;
+
+    const sorted = try mod.preprocessSortedWindows(allocator, std.mem.sliceAsBytes(scalars), 8);
+    defer sorted.deinit(allocator);
+
+    const fq: usize = 32;
+    const x_c0 = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(x_c0);
+    const x_c1 = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(x_c1);
+    const y_c0 = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(y_c0);
+    const y_c1 = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(y_c1);
+    const neg_y_c0 = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(neg_y_c0);
+    const neg_y_c1 = try allocator.alloc(u8, points.len * fq);
+    defer allocator.free(neg_y_c1);
+
+    for (points, 0..) |pt, i| {
+        const dst = i * fq;
+        const neg_y = cpu.field.fq2_neg(pt.y);
+        @memcpy(x_c0[dst..][0..fq], std.mem.asBytes(&pt.x.a));
+        @memcpy(x_c1[dst..][0..fq], std.mem.asBytes(&pt.x.b));
+        @memcpy(y_c0[dst..][0..fq], std.mem.asBytes(&pt.y.a));
+        @memcpy(y_c1[dst..][0..fq], std.mem.asBytes(&pt.y.b));
+        @memcpy(neg_y_c0[dst..][0..fq], std.mem.asBytes(&neg_y.a));
+        @memcpy(neg_y_c1[dst..][0..fq], std.mem.asBytes(&neg_y.b));
+    }
+
+    const windows = try prover.msmG2_v6(x_c0, x_c1, y_c0, y_c1, neg_y_c0, neg_y_c1, msmConfig(n_points), sorted.bucket_offsets, sorted.sorted_indices);
+    defer allocator.free(windows);
+    return accumulateG2(windows);
+}
+
 /// Accumulate G2 window results into a single point.
 /// Mirrors metal.accumulateG2.
 pub fn accumulateG2(windows: []const mod.G2Point) cpu.curve.G2Point {

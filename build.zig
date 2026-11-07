@@ -12,19 +12,17 @@ fn moltenVkRoot() []const u8 {
 }
 
 fn linkVulkan(module: *std.Build.Module, enable: bool, macos: bool, lib_path: []const u8) void {
-    if (!enable) return;
-    if (macos) {
-        module.addLibraryPath(.{ .cwd_relative = lib_path });
-        module.linkSystemLibrary("MoltenVK", .{});
-    } else {
-        module.linkSystemLibrary("vulkan", .{});
-    }
+    if (!enable or !macos) return;
+    // Linux opens libvulkan.so.1 at runtime so a machine without a loader still runs the CPU prover.
+    module.addLibraryPath(.{ .cwd_relative = lib_path });
+    module.linkSystemLibrary("MoltenVK", .{});
 }
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const enable_vulkan = b.option(bool, "vulkan", "Build the Vulkan backend (glslang and a Vulkan loader)") orelse false;
+    const enable_vulkan = b.option(bool, "vulkan", "Compile Vulkan multiscalar multiplication. The loader is opened at runtime.") orelse false;
+    const vulkan_include = b.option([]const u8, "vulkan-include", "Directory that contains vulkan/vulkan.h");
     const molten_vk_root = moltenVkRoot();
     const molten_vk_lib = b.fmt("{s}/lib", .{molten_vk_root});
     const molten_vk_include = b.fmt("{s}/libexec/include", .{molten_vk_root});
@@ -174,10 +172,11 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        vk_c.addIncludePath(.{ .cwd_relative = molten_vk_include });
+        const vk_include = vulkan_include orelse if (is_macos) molten_vk_include else "/usr/include";
+        vk_c.addIncludePath(.{ .cwd_relative = vk_include });
         gpu_module.addImport("vk", vk_c.createModule());
         gpu_module.addImport("spirv", spirv_module.?);
-        gpu_module.addIncludePath(.{ .cwd_relative = molten_vk_include });
+        gpu_module.addIncludePath(.{ .cwd_relative = vk_include });
     }
     if (metal_shader_module) |msm| {
         gpu_module.addImport("metal_shader", msm);
@@ -201,17 +200,13 @@ pub fn build(b: *std.Build) void {
     lib.root_module.link_libc = true;
     lib.root_module.addImport("c", c_module);
 
-    if (is_native) {
-        if (is_macos) {
-            lib.root_module.linkFramework("Foundation", .{});
-            lib.root_module.linkFramework("Metal", .{});
-            lib.root_module.linkFramework("QuartzCore", .{});
-            // Also link MoltenVK on macOS when building natively
-            linkVulkan(lib.root_module, enable_vulkan, is_macos, molten_vk_lib);
-        } else {
-            lib.root_module.linkSystemLibrary("pthread", .{});
-            linkVulkan(lib.root_module, enable_vulkan, is_macos, molten_vk_lib);
-        }
+    if (is_macos and is_native) {
+        lib.root_module.linkFramework("Foundation", .{});
+        lib.root_module.linkFramework("Metal", .{});
+        lib.root_module.linkFramework("QuartzCore", .{});
+        linkVulkan(lib.root_module, enable_vulkan, is_macos, molten_vk_lib);
+    } else if (!is_macos) {
+        lib.root_module.linkSystemLibrary("pthread", .{});
     }
 
     b.installArtifact(lib);
@@ -234,16 +229,13 @@ pub fn build(b: *std.Build) void {
     dylib.root_module.link_libc = true;
     dylib.root_module.addImport("c", c_module);
 
-    if (is_native) {
-        if (is_macos) {
-            dylib.root_module.linkFramework("Foundation", .{});
-            dylib.root_module.linkFramework("Metal", .{});
-            dylib.root_module.linkFramework("QuartzCore", .{});
-            linkVulkan(dylib.root_module, enable_vulkan, is_macos, molten_vk_lib);
-        } else {
-            dylib.root_module.linkSystemLibrary("pthread", .{});
-            linkVulkan(dylib.root_module, enable_vulkan, is_macos, molten_vk_lib);
-        }
+    if (is_macos and is_native) {
+        dylib.root_module.linkFramework("Foundation", .{});
+        dylib.root_module.linkFramework("Metal", .{});
+        dylib.root_module.linkFramework("QuartzCore", .{});
+        linkVulkan(dylib.root_module, enable_vulkan, is_macos, molten_vk_lib);
+    } else if (!is_macos) {
+        dylib.root_module.linkSystemLibrary("pthread", .{});
     }
 
     b.installArtifact(dylib);
@@ -266,17 +258,13 @@ pub fn build(b: *std.Build) void {
     exe.root_module.link_libc = true;
     exe.root_module.addImport("c", c_module);
 
-    if (is_native) {
-        if (is_macos) {
-            exe.root_module.linkFramework("Foundation", .{});
-            exe.root_module.linkFramework("Metal", .{});
-            exe.root_module.linkFramework("QuartzCore", .{});
-            // Also link MoltenVK on macOS when building natively
-            linkVulkan(exe.root_module, enable_vulkan, is_macos, molten_vk_lib);
-        } else {
-            exe.root_module.linkSystemLibrary("pthread", .{});
-            linkVulkan(exe.root_module, enable_vulkan, is_macos, molten_vk_lib);
-        }
+    if (is_macos and is_native) {
+        exe.root_module.linkFramework("Foundation", .{});
+        exe.root_module.linkFramework("Metal", .{});
+        exe.root_module.linkFramework("QuartzCore", .{});
+        linkVulkan(exe.root_module, enable_vulkan, is_macos, molten_vk_lib);
+    } else if (!is_macos) {
+        exe.root_module.linkSystemLibrary("pthread", .{});
     }
 
     b.installArtifact(exe);
@@ -457,6 +445,8 @@ pub fn build(b: *std.Build) void {
         window_preprocess_bench_step.dependOn(check);
     }
 
+    // Metal and GPU test tools are macOS-only. Linux installs the CPU library and CLIs.
+    if (is_macos) {
     // Metal fq_mul test
     const metal_fq_mul_test = b.addExecutable(.{
         .name = "test-metal-fq-mul",
@@ -1076,4 +1066,5 @@ pub fn build(b: *std.Build) void {
     }
     ifftscale_large.root_module.link_libc = true;
     b.installArtifact(ifftscale_large);
+    }
 }

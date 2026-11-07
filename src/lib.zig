@@ -38,10 +38,19 @@ fn writeBufferToTempFile(tmp_path: []const u8, buffer: []const u8) !void {
 
 /// Run prover with auto-selected backend (GPU if available, else CPU).
 fn runProverLibrary(zkey_path: []const u8, witness_path: []const u8) !cpu.ProofResult {
-    if (@import("builtin").os.tag == .macos) {
+    if (comptime @import("builtin").os.tag == .macos) {
         return gpu.metal.proveOnGpuProfiled(zkey_path, witness_path, .{});
     }
-    return error.GpuOnly;
+    useVulkanIfAvailable();
+    return cpu.prove(zkey_path, witness_path);
+}
+
+fn useVulkanIfAvailable() void {
+    if (comptime gpu.vulkan_enabled) {
+        if (!gpu.vulkan.attach(std.heap.c_allocator)) return;
+        cpu.prover.g1_msm_override = gpu.vulkan.msmG1Affine;
+        cpu.prover.g2_msm_override = gpu.vulkan.msmG2Affine;
+    }
 }
 
 export fn groth16_prover_zkey_file(

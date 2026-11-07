@@ -15,11 +15,12 @@ class Zkey < Formula
   option "with-vulkan", "Build the Vulkan backend with glslang and MoltenVK"
 
   depends_on "zig" => :build if build.head?
-  depends_on "glslang" => :build if build.head? && build.with?("vulkan")
-  depends_on "molten-vk" if build.head? && build.with?("vulkan")
-  depends_on macos: :sonoma
+  depends_on "glslang" => :build if build.head? && (OS.linux? || build.with?("vulkan"))
+  depends_on "vulkan-headers" => :build if build.head? && OS.linux?
+  depends_on "molten-vk" if build.head? && build.with?("vulkan") && OS.mac?
 
   on_macos do
+    depends_on macos: :sonoma
     depends_on xcode: :build if build.head?
   end
 
@@ -30,30 +31,41 @@ class Zkey < Formula
 
     if build.head?
       args = ["-Doptimize=ReleaseFast"]
-      args << "-Dvulkan=true" if build.with?("vulkan")
+      if OS.linux?
+        args << "-Dvulkan=true"
+        args << "-Dvulkan-include=#{Formula["vulkan-headers"].opt_include}"
+      elsif build.with?("vulkan")
+        args << "-Dvulkan=true"
+      end
 
       system "zig", "build", *args
 
       bin.install "zig-out/bin/zkey"
-      bin.install "zig-out/bin/bn254.metallib"
       bin.install "zig-out/bin/prover"
-      lib.install "zig-out/lib/libgroth16.dylib"
-      lib.install "zig-out/lib/libgroth16.a"
       include.install "zig-out/include/groth16.h"
+      lib.install "zig-out/lib/libgroth16.a"
+      if OS.mac?
+        bin.install "zig-out/bin/bn254.metallib"
+        lib.install "zig-out/lib/libgroth16.dylib"
+      else
+        lib.install "zig-out/lib/libgroth16.so"
+      end
     else
       bin.install Dir["bin/*"]
       lib.install Dir["lib/*"]
       include.install "include/groth16.h"
     end
 
-    system "install_name_tool", "-id", opt_lib/"libgroth16.dylib", lib/"libgroth16.dylib"
-    system "codesign", "--sign", "-", "--force", lib/"libgroth16.dylib"
+    if OS.mac?
+      system "install_name_tool", "-id", opt_lib/"libgroth16.dylib", lib/"libgroth16.dylib"
+      system "codesign", "--sign", "-", "--force", lib/"libgroth16.dylib"
+    end
   end
 
   def caveats
     <<~EOS
-      libgroth16.dylib:
-        #{opt_lib}/libgroth16.dylib
+      Shared library:
+        #{opt_lib}/#{shared_lib}
 
       groth16.h:
         #{opt_include}/groth16.h
@@ -62,22 +74,32 @@ class Zkey < Formula
         -L#{opt_lib} -lgroth16 -I#{opt_include}
 
       `zkey lib` prints the library path and those flags.
-      #{if build.head? && build.with?("vulkan")
-          "Vulkan is enabled."
-        elsif build.head?
-          "Vulkan is off. Rebuild with --HEAD --with-vulkan to add glslang and MoltenVK."
-        else
-          "Installed from the 0.2.1 Apple Silicon release. Vulkan is off in that archive."
-        end}
+      #{caveat_backend}
     EOS
   end
 
   test do
     assert_match "usage:", shell_output("#{bin}/zkey 2>&1", 1)
     libpath = shell_output("#{bin}/zkey lib").strip
-    assert_equal (lib/"libgroth16.dylib").realpath.to_s, Pathname.new(libpath).realpath.to_s
+    assert_equal (lib/shared_lib).realpath.to_s, Pathname.new(libpath).realpath.to_s
     assert_predicate include/"groth16.h", :exist?
-    assert_predicate bin/"bn254.metallib", :exist?
     assert_predicate bin/"prover", :exist?
+    assert_predicate bin/"bn254.metallib", :exist? if OS.mac?
+  end
+
+  def shared_lib
+    OS.mac? ? "libgroth16.dylib" : "libgroth16.so"
+  end
+
+  def caveat_backend
+    if OS.linux?
+      "Vulkan multiscalar multiplication is compiled in and used when libvulkan.so.1 and a compute device are present. Otherwise the CPU prover runs."
+    elsif build.head? && build.with?("vulkan")
+      "Vulkan is enabled for testing. The published macOS archive stays on Metal."
+    elsif build.head?
+      "Vulkan is off. Rebuild with --HEAD --with-vulkan to test it through MoltenVK. The published macOS archive stays on Metal."
+    else
+      "Installed from the Apple Silicon release. That archive uses Metal. Vulkan ships in the Linux archives."
+    end
   end
 end

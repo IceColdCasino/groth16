@@ -65,7 +65,7 @@ fn usage(argv0: []const u8) void {
     std.debug.print("       {s} setup <circuit.r1cs> <ceremony.ptau> <out.zkey>\n", .{argv0});
     std.debug.print("       {s} contribute <in.zkey> <out.zkey> [name]\n", .{argv0});
     std.debug.print("       {s} vk <in.zkey> <verification_key.json>\n", .{argv0});
-    std.debug.print("       {s} prove <libgroth16.dylib> <out.zkey> <witness.wtns> <vk.json>\n", .{argv0});
+    std.debug.print("       {s} prove <libgroth16> <out.zkey> <witness.wtns> <vk.json>\n", .{argv0});
     std.debug.print("       {s} lib\n", .{argv0});
 }
 
@@ -82,7 +82,13 @@ fn printLib(io: std.Io) !void {
 
     var lib_buf: [std.fs.max_path_bytes]u8 = undefined;
     var inc_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const lib_path = joinZ(&lib_buf, prefix, "/lib/libgroth16.dylib") orelse return error.Usage;
+    const lib_name = if (@import("builtin").os.tag == .macos)
+        "/lib/libgroth16.dylib"
+    else if (@import("builtin").os.tag == .windows)
+        "/lib/groth16.dll"
+    else
+        "/lib/libgroth16.so";
+    const lib_path = joinZ(&lib_buf, prefix, lib_name) orelse return error.Usage;
     const include_dir = joinZ(&inc_buf, prefix, "/include") orelse return error.Usage;
 
     var real_buf: [std.fs.max_path_bytes]u8 = undefined;

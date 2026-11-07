@@ -6,7 +6,9 @@ The default path runs Zig on the CPU and Metal on the GPU at the same time. Meas
 
 ## Install
 
-The stable formula downloads the Apple Silicon archive from the [0.2.1 GitHub release](https://github.com/IceColdCasino/groth16/releases/tag/v0.2.1). That install does not need Zig or Xcode. macOS 14 or newer is required. A Linux package is not available yet.
+The stable formula downloads the Apple Silicon archive from the [0.2.1 GitHub release](https://github.com/IceColdCasino/groth16/releases/tag/v0.2.1). That install does not need Zig or Xcode. macOS 14 or newer is required, and that archive uses Metal.
+
+Linux x86_64 and aarch64 archives are built with Vulkan multiscalar multiplication. A published Linux build uses Vulkan when `libvulkan.so.1` and a compute device are present, and the CPU prover otherwise. The macOS archive does not include Vulkan. `brew install --HEAD --with-vulkan` on macOS builds the Vulkan path against MoltenVK so it can be tested there.
 
 ```sh
 brew trust --tap IceColdCasino/groth16

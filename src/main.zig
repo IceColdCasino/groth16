@@ -8,8 +8,9 @@ const usage =
     \\
     \\Options:
     \\  --cpu          Use the Zig CPU backend
-    \\  --metal        Use Metal GPU backend
-    \\  --gpu          Auto-select best GPU (Metal on macOS)
+    \\  --metal        Use the Metal GPU backend (macOS)
+    \\  --vulkan       Use Vulkan for multiscalar multiplication when a device is present
+    \\  --gpu          Metal on macOS, Vulkan on Linux when a device is present
     \\  -V, --verbose  Show timing information
     \\  -h, --help     Show this help message
     \\
@@ -36,6 +37,7 @@ const BackendMode = enum {
     auto,
     cpu,
     metal,
+    vulkan,
     gpu,
 };
 
@@ -48,21 +50,37 @@ fn runProver(
     witness_path: []const u8,
 ) !cpu.ProofResult {
     switch (backend) {
-        .cpu => return cpu.prove(zkey_path, witness_path),
-        .auto, .metal => {
-            if (@import("builtin").os.tag != .macos) {
-                return error.BackendNotAvailable;
-            }
-            // Run full GPU proving pipeline via Metal
-            return gpu.metal.proveOnGpu(zkey_path, witness_path, .{});
+        .cpu => {
+            cpu.prover.g1_msm_override = null;
+            cpu.prover.g2_msm_override = null;
+            return cpu.prove(zkey_path, witness_path);
         },
-        .gpu => {
-            // GPU backend - currently Metal only
-            if (@import("builtin").os.tag == .macos) {
-                return runProver(.metal, zkey_path, witness_path);
-            } else {
-                return error.BackendNotAvailable;
+        .vulkan => {
+            if (comptime gpu.vulkan_enabled) {
+                if (gpu.vulkan.attach(std.heap.c_allocator)) {
+                    cpu.prover.g1_msm_override = gpu.vulkan.msmG1Affine;
+                    cpu.prover.g2_msm_override = gpu.vulkan.msmG2Affine;
+                }
             }
+            return cpu.prove(zkey_path, witness_path);
+        },
+        .metal => {
+            if (comptime @import("builtin").os.tag == .macos) {
+                return gpu.metal.proveOnGpu(zkey_path, witness_path, .{});
+            }
+            return cpu.prove(zkey_path, witness_path);
+        },
+        .auto, .gpu => {
+            if (comptime @import("builtin").os.tag == .macos) {
+                return gpu.metal.proveOnGpu(zkey_path, witness_path, .{});
+            }
+            if (comptime gpu.vulkan_enabled) {
+                if (gpu.vulkan.attach(std.heap.c_allocator)) {
+                    cpu.prover.g1_msm_override = gpu.vulkan.msmG1Affine;
+                    cpu.prover.g2_msm_override = gpu.vulkan.msmG2Affine;
+                }
+            }
+            return cpu.prove(zkey_path, witness_path);
         },
     }
 }
@@ -85,6 +103,8 @@ pub fn main(init: std.process.Init) !u8 {
     while (arg_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             return 0;
+        } else if (std.mem.eql(u8, arg, "--vulkan")) {
+            backend = .vulkan;
         } else if (std.mem.eql(u8, arg, "--cpu")) {
             backend = .cpu;
         } else if (std.mem.eql(u8, arg, "--metal")) {
@@ -112,12 +132,10 @@ pub fn main(init: std.process.Init) !u8 {
     if (verbose) {
     }
 
-    // Resolve auto and gpu backends
+    // On macOS, --gpu is Metal. On Linux it stays Vulkan-when-available.
     var resolved_backend = backend;
-    if (backend == .gpu) {
-        resolved_backend = if (@import("builtin").os.tag == .macos) .metal else .cpu;
-        if (verbose) {
-        }
+    if (backend == .gpu and comptime @import("builtin").os.tag == .macos) {
+        resolved_backend = .metal;
     }
 
     // Run prover with optional timing

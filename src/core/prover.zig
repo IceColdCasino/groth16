@@ -130,8 +130,25 @@ fn parseVerificationKey(zkey: parser.Zkey) !VerificationKey {
 // G2 MSM (simple O(n) scalar multiplication and addition)
 // ============================================================================
 
+pub const G1MsmFn = *const fn (std.mem.Allocator, []const curve.G1PointAffine, []const field.FrElement) anyerror!curve.G1Point;
+pub const G2MsmFn = *const fn (std.mem.Allocator, []const curve.G2PointAffine, []const field.FrElement) anyerror!curve.G2Point;
+
+/// Set by the library on Linux when a Vulkan device loads. A failure falls back to the CPU.
+pub var g1_msm_override: ?G1MsmFn = null;
+pub var g2_msm_override: ?G2MsmFn = null;
+
+fn msmG1(allocator: std.mem.Allocator, points: []const curve.G1PointAffine, scalars: []const field.FrElement) !curve.G1Point {
+    if (g1_msm_override) |hook| {
+        if (hook(allocator, points, scalars)) |point| return point else |_| {}
+    }
+    return msm.msm_g1(allocator, points, scalars);
+}
+
 fn msmG2(allocator: std.mem.Allocator, points: []const curve.G2PointAffine, scalars: []const field.FrElement) !curve.G2Point {
-    return try msm.msm_g2(allocator, points, scalars);
+    if (g2_msm_override) |hook| {
+        if (hook(allocator, points, scalars)) |point| return point else |_| {}
+    }
+    return msm.msm_g2(allocator, points, scalars);
 }
 
 // ============================================================================
@@ -298,19 +315,17 @@ pub fn prove(
 
     // 7. MSMs on all variables (unrandomized)
 
-    const pi_a_unrand = try msm.msm_g1(allocator, points_a, witness_fr[0..nVars]);
-    const pib1_unrand = try msm.msm_g1(allocator, points_b1, witness_fr[0..nVars]);
+    const pi_a_unrand = try msmG1(allocator, points_a, witness_fr[0..nVars]);
+    const pib1_unrand = try msmG1(allocator, points_b1, witness_fr[0..nVars]);
     const pi_b_unrand = try msmG2(allocator, points_b2, witness_fr[0..nVars]);
 
     const pi_c_scalars = witness_fr[nPublic + 1 .. nVars];
     const pi_c_unrand = if (n_private > 0)
-        try msm.msm_g1(allocator, points_c, pi_c_scalars)
+        try msmG1(allocator, points_c, pi_c_scalars)
     else
         curve.g1_zero();
 
-
-
-    const pih = try msm.msm_g1(allocator, points_h, h_coeffs);
+    const pih = try msmG1(allocator, points_h, h_coeffs);
 
     const r = options.r orelse random.fr_random();
     const s = options.s orelse random.fr_random();
