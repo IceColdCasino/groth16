@@ -1,26 +1,26 @@
 class Zkey < Formula
   desc "Groth16 proving-key setup and prove/verify library"
   homepage "https://github.com/IceColdCasino/groth16"
-  version "0.3.0"
+  version "0.3.1"
   head "https://github.com/IceColdCasino/groth16.git", branch: "main"
 
   # Published by the macOS and Linux release workflows. The macOS archive is Metal.
   # The Linux archives compile in Vulkan and use it when a device is present.
   on_macos do
     on_arm do
-      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-macos-aarch64.tar.gz"
-      sha256 "6e92f70adc3999c88ee3d9b39db677aa6f75f429d2baba824e050270affd305a"
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.1/groth16-0.3.1-macos-aarch64.tar.gz"
+      sha256 "a6de0a2a447daea7a59fec6cae5c6be7870e8fa2f4d047dd82216bba47f60ab1"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-linux-x86_64.tar.gz"
-      sha256 "eda470d0ee3c627a4072fa5d91db29450c78e05ee931bbe0697829725a23dbfc"
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.1/groth16-0.3.1-linux-x86_64.tar.gz"
+      sha256 "127b1acdbdc3c2cdc5d5ece2748455eaf8b55821282d70d49870b136efdf9369"
     end
     on_arm do
-      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.0/groth16-0.3.0-linux-aarch64.tar.gz"
-      sha256 "fbaae9cb78d35a4d4158190f8fa3368282634244dd42c84cbc9e872dfe219e77"
+      url "https://github.com/IceColdCasino/groth16/releases/download/v0.3.1/groth16-0.3.1-linux-aarch64.tar.gz"
+      sha256 "d7d7fe0081cc32c4f76e73cb41b825c448421c81c3e6b979ef362a87a59a06da"
     end
   end
 
