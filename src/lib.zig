@@ -198,6 +198,9 @@ const Groth16ProverObj = struct {
     domainSize: u32,
     n8: u32,
     n8r: u32,
+    /// One temp copy for the life of this prover. A new path on every prove
+    /// made the zkey cache keep another full copy of the circuit each time.
+    zkey_tmp: ?[]u8 = null,
 };
 
 export fn groth16_prover_create(
@@ -244,6 +247,7 @@ export fn groth16_prover_create(
         .domainSize = zkey.header.domainSize,
         .n8 = zkey.header.n8,
         .n8r = zkey.header.n8r,
+        .zkey_tmp = null,
     };
     prover_object.?.* = obj;
     return PROVER_OK;
@@ -270,6 +274,10 @@ export fn groth16_prover_create_zkey_file(
 export fn groth16_prover_destroy(prover_object: ?*anyopaque) void {
     if (prover_object == null) return;
     const obj = @as(*Groth16ProverObj, @ptrCast(@alignCast(prover_object.?)));
+    if (obj.zkey_tmp) |path| {
+        _ = c.remove(path.ptr);
+        std.heap.c_allocator.free(path);
+    }
     std.heap.c_allocator.free(obj.zkey_data);
     std.heap.c_allocator.destroy(obj);
 }
@@ -340,23 +348,26 @@ export fn groth16_prover_prove(
         return PROVER_ERROR;
     };
 
-    // Write zkey to unique temp file (proveOnGpu needs file path)
-    const zkey_tmp = makeTempPath("zkey") catch |err| {
-        if (error_msg_maxsize > 0) {
-            _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Failed to create temp path: {}", .{err}) catch {};
-        }
-        return PROVER_ERROR;
-    };
-    defer {
-        _ = c.remove(zkey_tmp.ptr);
-        std.heap.c_allocator.free(zkey_tmp);
+    // One zkey file per prover object. proveOnGpu caches by path, so a new
+    // file on every call retained another copy of the circuit in memory.
+    if (obj.zkey_tmp == null) {
+        const zkey_tmp = makeTempPath("zkey") catch |err| {
+            if (error_msg_maxsize > 0) {
+                _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Failed to create temp path: {}", .{err}) catch {};
+            }
+            return PROVER_ERROR;
+        };
+        writeBufferToTempFile(zkey_tmp, obj.zkey_data) catch |err| {
+            _ = c.remove(zkey_tmp.ptr);
+            std.heap.c_allocator.free(zkey_tmp);
+            if (error_msg_maxsize > 0) {
+                _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Failed to write zkey temp file: {}", .{err}) catch {};
+            }
+            return PROVER_ERROR;
+        };
+        obj.zkey_tmp = zkey_tmp;
     }
-    writeBufferToTempFile(zkey_tmp, obj.zkey_data) catch |err| {
-        if (error_msg_maxsize > 0) {
-            _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Failed to write zkey temp file: {}", .{err}) catch {};
-        }
-        return PROVER_ERROR;
-    };
+    const zkey_tmp = obj.zkey_tmp.?;
 
     var result = runProverLibrary(zkey_tmp, witness_tmp) catch |err| {
         if (error_msg_maxsize > 0) {

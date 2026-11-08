@@ -3829,7 +3829,8 @@ fn proveOnGpuInternal(
         stage_times[5] = getTimeMs() - t0;
         t0 = getTimeMs();
 
-        // Launch H-calc on queue 1 in background thread
+        // H runs on queue 1 while the CPU prepares points. MSMs wait for it.
+        // A second live Metal queue has produced proofs that do not verify.
         h_ctx = HCalcCtx{
             .prover = prover.?,
             .allocator = allocator,
@@ -3885,9 +3886,9 @@ fn proveOnGpuInternal(
     stage_times[7] = getTimeMs() - t0;
     t0 = getTimeMs();
 
-    // 9. Run MSMs — GPU-only via v6 single-kernel path
-    // Overlap: run witness-dependent G1 MSMs on queue 2 while H-calc runs on queue 1
-    //          and G2 MSM + H-MSM run on queue 3
+    // 9. MSMs, one Metal command buffer at a time. H, G1, G2, and the H
+    // product share one queue. Overlapping a second queue produced proofs
+    // that do not verify.
 
     var pi_a: cpu.curve.G1Point = undefined;
     var pib1: cpu.curve.G1Point = undefined;
@@ -3898,79 +3899,16 @@ fn proveOnGpuInternal(
     stage_times[7] = 0; // Init Metal already counted in stage 5
 
     if (needs_metal) {
-        // Context for queue 3 thread: H-MSM (after H-calc finishes on queue 1)
-        const Queue3Ctx = struct {
-            prover: *MetalProver,
-            allocator: std.mem.Allocator,
-            h_thread_ptr: *?std.Thread,
-            h_ctx_ptr: *HCalcCtx,
-            points_h: []const u8,
-            nVars: u32,
-            t_h_start: f64,
-            pih: ?cpu.curve.G1Point = null,
-            h_calc_ms: f64 = 0,
-            saved_h: ?[]cpu.field.FrElement = null,
-            err: ?anyerror = null,
+        if (h_thread) |thread| {
+            thread.join();
+            h_thread = null;
+        }
+        if (h_ctx.err) |e| return e;
+        const h_calc_ms = if (t_h_start == 0) 0 else getTimeMs() - t_h_start;
+        const h_coeffs = h_ctx.result orelse return error.HCalculationFailed;
+        defer allocator.free(h_coeffs);
 
-            fn run(ctx: *@This()) void {
-                // Join H-calc thread and run H-MSM on queue 2
-                if (ctx.h_thread_ptr.*) |thread| {
-                    thread.join();
-                    ctx.h_thread_ptr.* = null;
-                }
-                if (ctx.h_ctx_ptr.err) |e| {
-                    ctx.err = e;
-                    return;
-                }
-                ctx.h_calc_ms = getTimeMs() - ctx.t_h_start;
-                const h_coeffs = ctx.h_ctx_ptr.result orelse {
-                    ctx.err = error.HCalculationFailed;
-                    return;
-                };
-                defer ctx.allocator.free(h_coeffs);
-                if (std.c.getenv("PROVER_CHECK") != null) {
-                    ctx.saved_h = ctx.allocator.dupe(cpu.field.FrElement, h_coeffs) catch |e| {
-                        ctx.err = e;
-                        return;
-                    };
-                }
-
-                const h_bytes = std.mem.sliceAsBytes(h_coeffs);
-                const sorted_h_local = mod.preprocessSortedWindows(ctx.allocator, h_bytes, 8) catch |e| {
-                    ctx.err = e;
-                    return;
-                };
-                defer sorted_h_local.deinit(ctx.allocator);
-
-                const h_jobs = &[_]MetalProver.MSMJob{
-                    .{ .points = ctx.points_h, .sorted = sorted_h_local },
-                };
-                const pih_results = ctx.prover.msmG1_v5_batch(h_jobs, ctx.prover.command_queue_2) catch |e| {
-                    ctx.err = e;
-                    return;
-                };
-                defer {
-                    for (pih_results) |r| ctx.allocator.free(r);
-                    ctx.allocator.free(pih_results);
-                }
-                ctx.pih = accumulateG1(pih_results[0]);
-            }
-        };
-
-        var q3_ctx = Queue3Ctx{
-            .prover = prover.?,
-            .allocator = allocator,
-            .h_thread_ptr = &h_thread,
-            .h_ctx_ptr = &h_ctx,
-            .points_h = points_h,
-            .nVars = nVars,
-            .t_h_start = t_h_start,
-        };
-        const q3_thread = try std.Thread.spawn(.{}, Queue3Ctx.run, .{&q3_ctx});
-        var q3_joined = false;
-        defer if (!q3_joined) q3_thread.join();
-
-        // 9a. Run non-H G1 MSMs on queue 2 (concurrently with H-calc on queue 1)
+        const gpu_queue = prover.?.command_queue;
         const g1_nonh_jobs = if (n_private > 0 and sorted_private != null)
             &[_]MetalProver.MSMJob{
                 .{ .points = points_a, .sorted = sorted_full.? },
@@ -3983,17 +3921,14 @@ fn proveOnGpuInternal(
                 .{ .points = points_b1, .sorted = sorted_full.? },
             };
 
-        // G1 MSMs on queue 2 while Zig threads own G2 chunks and H-calc uses queue 1.
-        // G2 stays off a second GPU queue: that dispatch produced invalid proofs.
         const t_g1 = getTimeMs();
-        const g1_nonh_results = try prover.?.msmG1_v5_batch(g1_nonh_jobs, prover.?.command_queue_2);
+        const g1_nonh_results = try prover.?.msmG1_v5_batch(g1_nonh_jobs, gpu_queue);
         const g1_ms = getTimeMs() - t_g1;
         defer {
             for (g1_nonh_results) |res| allocator.free(res);
             allocator.free(g1_nonh_results);
         }
 
-        // Prep overlapped the G1 MSMs. Metal takes whatever G2 chunks Zig has not claimed.
         if (g2_thread) |thread| {
             thread.join();
             g2_thread = null;
@@ -4029,9 +3964,9 @@ fn proveOnGpuInternal(
                 g2_ctx.neg_y_c1.?[byte_off..][0..byte_len],
                 sorted_suffix,
                 g2_config,
-                prover.?.command_queue_2,
+                gpu_queue,
             );
-            // Zig finishes its last claimed chunk while Metal multiplies the tail.
+            // The CPU chunk does not touch the GPU, so it can finish during this wait.
             cpu_g2_thread.join();
             cpu_g2_joined = true;
             if (cpu_g2_ctx.err) |e| return e;
@@ -4051,11 +3986,19 @@ fn proveOnGpuInternal(
             .{ cpu_g2_ctx.points_done, cpu_g2_ctx.elapsed_ms, metal_points, metal_g2_ms, g1_ms },
         );
 
-        // Wait for queue 3 thread (H-MSM on queue_2) to finish
-        q3_thread.join();
-        q3_joined = true;
-        if (q3_ctx.err) |e| return e;
-        stage_times[6] = q3_ctx.h_calc_ms;
+        const h_bytes = std.mem.sliceAsBytes(h_coeffs);
+        const sorted_h_local = try mod.preprocessSortedWindows(allocator, h_bytes, 8);
+        defer sorted_h_local.deinit(allocator);
+        const h_jobs = &[_]MetalProver.MSMJob{
+            .{ .points = points_h, .sorted = sorted_h_local },
+        };
+        const pih_results = try prover.?.msmG1_v5_batch(h_jobs, gpu_queue);
+        defer {
+            for (pih_results) |r| allocator.free(r);
+            allocator.free(pih_results);
+        }
+        pih = accumulateG1(pih_results[0]);
+        stage_times[6] = h_calc_ms;
 
         defer {
             if (g2_ctx.x_c0) |buf| allocator.free(buf);
@@ -4066,42 +4009,36 @@ fn proveOnGpuInternal(
             if (g2_ctx.neg_y_c1) |buf| allocator.free(buf);
         }
 
-        // Accumulate window results
         const t_acc = getTimeMs();
         pi_a = accumulateG1(g1_nonh_results[0]);
         pib1 = accumulateG1(g1_nonh_results[1]);
         if (n_private > 0 and g1_nonh_results.len > 2) pi_c = accumulateG1(g1_nonh_results[2]);
-        pih = q3_ctx.pih.?;
         if (std.c.getenv("PROVER_CHECK") != null) {
-            if (q3_ctx.saved_h) |h_gpu| {
-                defer allocator.free(h_gpu);
-                q3_ctx.saved_h = null;
-                const qap_ready = qap_ctx.result orelse return error.HCalculationFailed;
-                checkProofMsms(
-                    allocator,
-                    points_a,
-                    points_b1,
-                    points_c,
-                    points_h,
-                    g2_points.slice,
-                    g2_scalars.slice,
-                    nPublic,
-                    h_gpu,
-                    qap_ready.a,
-                    qap_ready.b,
-                    qap_ready.c,
-                    domainSize,
-                    pi_a,
-                    pib1,
-                    pi_c,
-                    pi_b,
-                    pih,
-                ) catch |e| std.debug.print("PROVER_CHECK failed: {s}\n", .{@errorName(e)});
-            }
+            const qap_ready = qap_ctx.result orelse return error.HCalculationFailed;
+            checkProofMsms(
+                allocator,
+                points_a,
+                points_b1,
+                points_c,
+                points_h,
+                g2_points.slice,
+                g2_scalars.slice,
+                nPublic,
+                h_coeffs,
+                qap_ready.a,
+                qap_ready.b,
+                qap_ready.c,
+                domainSize,
+                pi_a,
+                pib1,
+                pi_c,
+                pi_b,
+                pih,
+            ) catch |e| std.debug.print("PROVER_CHECK failed: {s}\n", .{@errorName(e)});
         }
         const acc_ms = getTimeMs() - t_acc;
         stage_times[8] = getTimeMs() - t0;
-        std.debug.print("MSM breakdown: accumulate={d:.2}ms, total={d:.2}ms, qap={d:.0}ms, H={d:.0}ms\n", .{ acc_ms, stage_times[8], qap_ctx.elapsed_ms, q3_ctx.h_calc_ms });
+        std.debug.print("MSM breakdown: accumulate={d:.2}ms, total={d:.2}ms, qap={d:.0}ms, H={d:.0}ms\n", .{ acc_ms, stage_times[8], qap_ctx.elapsed_ms, h_calc_ms });
         t0 = getTimeMs();
     } else {
         // CPU fallback path (sequential)
