@@ -2,6 +2,7 @@ const std = @import("std");
 const cpu = @import("cpu");
 const gpu = @import("gpu");
 const c = @import("c");
+const fast_load = @import("fast_load.zig");
 
 const PROVER_OK = 0x0;
 const PROVER_ERROR = 0x1;
@@ -63,7 +64,10 @@ export fn groth16_prover_zkey_file(
     public_size: *c_ulonglong,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_prover_zkey_file", @TypeOf(&groth16_prover_zkey_file), &groth16_prover_zkey_file)) |fast| {
+        return fast(zkey_fname, wtns_buffer, wtns_size, proof_buffer, proof_size, public_buffer, public_size, error_msg, error_msg_maxsize);
+    }
     const zkey_path = std.mem.span(zkey_fname);
     const zkey_data = cpu.readFileToBuffer(zkey_path, std.heap.c_allocator) catch |err| {
         if (error_msg_maxsize > 0) {
@@ -97,7 +101,10 @@ export fn groth16_prover(
     public_size: *c_ulonglong,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_prover", @TypeOf(&groth16_prover), &groth16_prover)) |fast| {
+        return fast(zkey_buffer, zkey_size, wtns_buffer, wtns_size, proof_buffer, proof_size, public_buffer, public_size, error_msg, error_msg_maxsize);
+    }
     var prover: *anyopaque = undefined;
     var err = groth16_prover_create(&prover, zkey_buffer, zkey_size, error_msg, error_msg_maxsize);
     if (err != PROVER_OK) {
@@ -132,7 +139,10 @@ export fn groth16_verify(
     verification_key: [*:0]const u8,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_verify", @TypeOf(&groth16_verify), &groth16_verify)) |fast| {
+        return fast(proof, inputs, verification_key, error_msg, error_msg_maxsize);
+    }
     const proof_slice = std.mem.span(proof);
     const public_slice = std.mem.span(inputs);
     const vk_slice = std.mem.span(verification_key);
@@ -151,7 +161,8 @@ export fn groth16_verify(
     return VERIFIER_INVALID_PROOF;
 }
 
-export fn groth16_proof_size(proof_size: *c_ulonglong) void {
+export fn groth16_proof_size(proof_size: *c_ulonglong) callconv(.c) void {
+    if (callFast("groth16_proof_size", @TypeOf(&groth16_proof_size), &groth16_proof_size)) |fast| return fast(proof_size);
     proof_size.* = 810;
 }
 
@@ -161,7 +172,10 @@ export fn groth16_public_size_for_zkey_buf(
     public_size: *c_ulonglong,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_public_size_for_zkey_buf", @TypeOf(&groth16_public_size_for_zkey_buf), &groth16_public_size_for_zkey_buf)) |fast| {
+        return fast(zkey_buffer, zkey_size, public_size, error_msg, error_msg_maxsize);
+    }
     const zkey_slice = @as([*]const u8, @ptrCast(zkey_buffer))[0..zkey_size];
     var zkey = cpu.parser.parseZkey(std.heap.c_allocator, zkey_slice) catch |err| {
         if (error_msg_maxsize > 0) {
@@ -179,7 +193,10 @@ export fn groth16_public_size_for_zkey_file(
     public_size: *c_ulonglong,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_public_size_for_zkey_file", @TypeOf(&groth16_public_size_for_zkey_file), &groth16_public_size_for_zkey_file)) |fast| {
+        return fast(zkey_fname, public_size, error_msg, error_msg_maxsize);
+    }
     const zkey_path = std.mem.span(zkey_fname);
     const zkey_data = cpu.readFileToBuffer(zkey_path, std.heap.c_allocator) catch |err| {
         if (error_msg_maxsize > 0) {
@@ -209,7 +226,10 @@ export fn groth16_prover_create(
     zkey_size: c_ulonglong,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_prover_create", @TypeOf(&groth16_prover_create), &groth16_prover_create)) |fast| {
+        return fast(prover_object, zkey_buffer, zkey_size, error_msg, error_msg_maxsize);
+    }
     if (prover_object == null) {
         if (error_msg_maxsize > 0) {
             _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Null prover object pointer", .{}) catch {};
@@ -258,7 +278,10 @@ export fn groth16_prover_create_zkey_file(
     zkey_file_path: [*c]const u8,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_prover_create_zkey_file", @TypeOf(&groth16_prover_create_zkey_file), &groth16_prover_create_zkey_file)) |fast| {
+        return fast(prover_object, zkey_file_path, error_msg, error_msg_maxsize);
+    }
     const zkey_path = std.mem.span(zkey_file_path);
     const zkey_data = cpu.readFileToBuffer(zkey_path, std.heap.c_allocator) catch |err| {
         if (error_msg_maxsize > 0) {
@@ -271,7 +294,8 @@ export fn groth16_prover_create_zkey_file(
     return rc;
 }
 
-export fn groth16_prover_destroy(prover_object: ?*anyopaque) void {
+export fn groth16_prover_destroy(prover_object: ?*anyopaque) callconv(.c) void {
+    if (callFast("groth16_prover_destroy", @TypeOf(&groth16_prover_destroy), &groth16_prover_destroy)) |fast| return fast(prover_object);
     if (prover_object == null) return;
     const obj = @as(*Groth16ProverObj, @ptrCast(@alignCast(prover_object.?)));
     if (obj.zkey_tmp) |path| {
@@ -292,7 +316,10 @@ export fn groth16_prover_prove(
     public_size: *c_ulonglong,
     error_msg: [*c]u8,
     error_msg_maxsize: c_ulonglong,
-) c_int {
+) callconv(.c) c_int {
+    if (callFast("groth16_prover_prove", @TypeOf(&groth16_prover_prove), &groth16_prover_prove)) |fast| {
+        return fast(prover_object, wtns_buffer, wtns_size, proof_buffer, proof_size, public_buffer, public_size, error_msg, error_msg_maxsize);
+    }
     if (@intFromPtr(prover_object) == 0) {
         if (error_msg_maxsize > 0) {
             _ = std.fmt.bufPrint(error_msg[0..error_msg_maxsize], "Null prover object", .{}) catch {};
@@ -403,4 +430,10 @@ export fn groth16_prover_prove(
     public_size.* = public_signals.len;
 
     return PROVER_OK;
+}
+
+fn callFast(comptime name: [:0]const u8, comptime Func: type, current: Func) ?Func {
+    const found = fast_load.lookup(Func, name) orelse return null;
+    if (found == current) return null;
+    return found;
 }

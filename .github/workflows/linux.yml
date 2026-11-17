@@ -46,14 +46,23 @@ jobs:
           set -euo pipefail
           zig version
           prefix="${RUNNER_TEMP}/prefix"
-          # baseline, not the runner's native CPU. A native build SIGILLs on other GitHub hosts.
-          zig build -Doptimize=ReleaseFast -Dvulkan=true -Dcpu=baseline --prefix "$prefix"
+          # Portable plus x86-64-v3 or ARMv8.2, chosen at runtime. A native build SIGILLs on other GitHub hosts.
+          zig build -Doptimize=ReleaseFast -Dvulkan=true -Dsimd=runtime --prefix "$prefix"
           test -x "$prefix/bin/zkey"
           test -x "$prefix/bin/prover"
           test ! -e "$prefix/bin/bn254.metallib"
           test -f "$prefix/lib/libgroth16.so"
           test -f "$prefix/include/groth16.h"
           nm -D "$prefix/lib/libgroth16.so" | grep -q ' groth16_verify$'
+          test -f "$prefix/lib/libgroth16_fast.so"
+          nm -D "$prefix/lib/libgroth16_fast.so" | grep -q ' groth16_verify$'
+          if [ "$(uname -m)" = x86_64 ]; then
+            objdump -d "$prefix/lib/libgroth16_fast.so" | grep -q '%ymm'
+            if objdump -d "$prefix/lib/libgroth16.so" | grep -q '%ymm'; then
+              echo "portable libgroth16.so contains AVX registers" >&2
+              exit 1
+            fi
+          fi
           if ldd "$prefix/lib/libgroth16.so" | grep -q 'libvulkan'; then
             echo "libgroth16.so must dlopen Vulkan, not link it" >&2
             exit 1
@@ -75,7 +84,7 @@ jobs:
           stage="${RUNNER_TEMP}/${name}"
           mkdir -p "$stage/bin" "$stage/lib" "$stage/include"
           cp "$prefix/bin/zkey" "$prefix/bin/prover" "$stage/bin/"
-          cp "$prefix/lib/libgroth16.so" "$prefix/lib/libgroth16.a" "$stage/lib/"
+          cp "$prefix/lib/libgroth16.so" "$prefix/lib/libgroth16.a" "$prefix/lib/libgroth16_fast.so" "$stage/lib/"
           cp "$prefix/include/groth16.h" "$stage/include/"
           libpath="$("$stage/bin/zkey" lib)"
           expected="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$stage/lib/libgroth16.so")"
@@ -86,6 +95,6 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$version" \
-              --notes "Linux ${zarch} archive. Vulkan multiscalar multiplication is used when libvulkan.so.1 and a compute device are present. Otherwise the CPU prover runs. The macOS archive for this tag is Metal." || true
+              --notes "Linux ${zarch} archive. libgroth16.so is portable and loads libgroth16_fast.so when the CPU supports x86-64-v3 or ARMv8.2. Vulkan multiscalar multiplication is used when libvulkan.so.1 and a compute device are present. Otherwise the CPU prover runs. The macOS archive for this tag is Metal." || true
           fi
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${RUNNER_TEMP}/${name}.tar.gz"

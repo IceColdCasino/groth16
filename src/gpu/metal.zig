@@ -3115,25 +3115,7 @@ fn calculateHGpuCpu(
     cpu.fft.ifft_fr(b_fr, domainSize);
     cpu.fft.ifft_fr(c_fr, domainSize);
 
-    const g = switch (domainSize) {
-        1024 => cpu.fft.FR_OMEGA_2048,
-        2048 => cpu.fft.FR_OMEGA_4096,
-        4096 => cpu.fft.FR_OMEGA_8192,
-        8192 => cpu.fft.FR_OMEGA_16384,
-        16384 => cpu.fft.FR_OMEGA_32768,
-        32768 => cpu.fft.FR_OMEGA_65536,
-        65536 => cpu.fft.FR_OMEGA_131072,
-        131072 => cpu.fft.FR_OMEGA_262144,
-        262144 => cpu.fft.FR_OMEGA_524288,
-        524288 => cpu.fft.FR_OMEGA_1048576,
-        1048576 => cpu.fft.FR_OMEGA_2097152,
-        2097152 => cpu.fft.FR_OMEGA_4194304,
-        4194304 => cpu.fft.FR_OMEGA_8388608,
-        else => {
-            std.debug.assert(@popCount(domainSize) == 1);
-            std.debug.panic("Unsupported domain size for coset shift: {d}", .{domainSize});
-        },
-    };
+    const g = cpu.fft.cosetGenerator(domainSize);
     cpu.fft.shiftCoefficients(a_fr, domainSize, g);
     cpu.fft.shiftCoefficients(b_fr, domainSize, g);
     cpu.fft.shiftCoefficients(c_fr, domainSize, g);
@@ -3224,25 +3206,7 @@ pub fn calculateHGpu(
 
     // Shift coefficients to coset domain by multiplying with g^i
     // where g is the 2n-th primitive root of unity
-    const g = switch (domainSize) {
-        1024 => cpu.fft.FR_OMEGA_2048,
-        2048 => cpu.fft.FR_OMEGA_4096,
-        4096 => cpu.fft.FR_OMEGA_8192,
-        8192 => cpu.fft.FR_OMEGA_16384,
-        16384 => cpu.fft.FR_OMEGA_32768,
-        32768 => cpu.fft.FR_OMEGA_65536,
-        65536 => cpu.fft.FR_OMEGA_131072,
-        131072 => cpu.fft.FR_OMEGA_262144,
-        262144 => cpu.fft.FR_OMEGA_524288,
-        524288 => cpu.fft.FR_OMEGA_1048576,
-        1048576 => cpu.fft.FR_OMEGA_2097152,
-        2097152 => cpu.fft.FR_OMEGA_4194304,
-        4194304 => cpu.fft.FR_OMEGA_8388608,
-        else => {
-            std.debug.assert(@popCount(domainSize) == 1);
-            std.debug.panic("Unsupported domain size for coset shift: {d}", .{domainSize});
-        },
-    };
+    const g = cpu.fft.cosetGenerator(domainSize);
     cpu.fft.shiftCoefficients(a_mut, domainSize, g);
     cpu.fft.shiftCoefficients(b_mut, domainSize, g);
     cpu.fft.shiftCoefficients(c_mut, domainSize, g);

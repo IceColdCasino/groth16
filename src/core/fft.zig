@@ -248,6 +248,14 @@ pub fn shiftCoefficients(a: []field.FrElement, n: u32, g: field.FrElement) void 
     }
 }
 
+/// `g` for the coset shift of a domain: the primitive `2n`-th root of unity.
+/// Domains from 2^8 through 2^22 are covered. Roots at or below 2^10 are
+/// powers of `FR_OMEGA_1024`.
+pub fn cosetGenerator(domain_size: u32) field.FrElement {
+    std.debug.assert(domain_size >= 256 and @popCount(domain_size) == 1 and domain_size <= (1 << 22));
+    return getOmegaN(domain_size << 1);
+}
+
 pub fn getOmegaN(n: u32) field.FrElement {
     std.debug.assert(n > 0 and @popCount(n) == 1 and n <= 8388608);
 
@@ -353,6 +361,22 @@ test "roots of unity square to the next smaller root" {
     for (pairs) |pair| {
         const squared = field.fr_mul(pair[0], pair[0]);
         try std.testing.expect(field.fr_eq(squared, pair[1]));
+    }
+}
+
+test "domains from 2^8 through 2^12 have a coset generator and a roundtrip" {
+    var n: u32 = 256;
+    while (n <= 4096) : (n <<= 1) {
+        const g = cosetGenerator(n);
+        try std.testing.expect(field.fr_eq(field.fr_mul(g, g), getOmegaN(n)));
+        var data = try std.testing.allocator.alloc(field.FrElement, n);
+        defer std.testing.allocator.free(data);
+        for (0..n) |i| data[i] = field.fr_toMont(field.fr_from_u64(@intCast(i + 1)));
+        const copy = try std.testing.allocator.dupe(field.FrElement, data);
+        defer std.testing.allocator.free(copy);
+        fft_fr(data, n);
+        ifft_fr(data, n);
+        for (data, copy) |d, c| try std.testing.expect(field.fr_eq(d, c));
     }
 }
 

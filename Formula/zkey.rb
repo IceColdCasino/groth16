@@ -61,6 +61,8 @@ class Zkey < Formula
         lib.install "zig-out/lib/libgroth16.dylib"
       else
         lib.install "zig-out/lib/libgroth16.so"
+        fast = "zig-out/lib/libgroth16_fast.so"
+        lib.install fast if File.exist?(fast)
       end
     else
       bin.install Dir["bin/*"]

@@ -105,7 +105,7 @@ jobs:
 
           This archive is the Metal build. It does not include Vulkan. \`zkey lib\` prints the shared library path and the link flags. The library sits at \`bin/../lib/libgroth16.dylib\` relative to the \`zkey\` binary.
 
-          Linux x86_64 and aarch64 archives from this tag compile Vulkan in. Those builds use it for multiscalar multiplication when \`libvulkan.so.1\` and a compute device are present, and the CPU prover otherwise.
+          Linux x86_64 and aarch64 archives from this tag compile Vulkan in. Those builds use it for multiscalar multiplication when \`libvulkan.so.1\` and a compute device are present, and the CPU prover otherwise. Each Linux archive also contains \`lib/libgroth16_fast.so\`. The portable library loads it when the CPU supports x86-64-v3 or ARMv8.2.
 
           \`\`\`sh
           brew trust --tap IceColdCasino/groth16

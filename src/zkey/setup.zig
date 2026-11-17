@@ -1204,7 +1204,10 @@ fn threadCount(n_constraints: u32) usize {
 fn scan(io: std.Io, file: std.Io.File, magic: *const [4]u8) ![32]?Sec {
     var hdr: [12]u8 = undefined;
     try readExact(io, file, 0, &hdr);
-    if (!std.mem.eql(u8, hdr[0..4], magic)) return error.BadMagic;
+    if (!std.mem.eql(u8, hdr[0..4], magic)) {
+        std.debug.print("not a {s} file\n", .{magic});
+        return error.BadMagic;
+    }
     const nsec = std.mem.readInt(u32, hdr[8..12], .little);
     var secs: [32]?Sec = @splat(null);
     var pos: u64 = 12;

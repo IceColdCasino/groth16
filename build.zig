@@ -20,8 +20,14 @@ fn linkVulkan(module: *std.Build.Module, enable: bool, macos: bool, lib_path: []
 }
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    const requested = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // Linux arm64 and amd64 keep a portable prover and a wide one (x86-64-v3
+    // or ARMv8.2 with LSE, CRC, and dotprod). The process checks the CPU.
+    const simd_mode = b.option(SimdMode, "simd", "Linux arm64/amd64 prover ISA: runtime or native") orelse defaultSimdMode(requested);
+    const simd_dispatch = simd_mode == .runtime and isLinuxSimdHost(requested);
+    const target = if (simd_dispatch) b.resolveTargetQuery(portableQuery(requested.query)) else requested;
+    const fast_target: ?std.Build.ResolvedTarget = if (simd_dispatch) b.resolveTargetQuery(fastQuery(requested)) else null;
     const enable_vulkan = b.option(bool, "vulkan", "Compile Vulkan multiscalar multiplication. The loader is opened at runtime.") orelse false;
     const vulkan_include = b.option([]const u8, "vulkan-include", "Directory that contains vulkan/vulkan.h");
     const molten_vk_root = moltenVkRoot(b.graph.io);
@@ -96,6 +102,7 @@ pub fn build(b: *std.Build) void {
 
     // SPIR-V shader compilation (Vulkan compute backend). Off unless -Dvulkan=true.
     var spirv_module: ?*std.Build.Module = null;
+    var spirv_blobs: ?SpirvBlobs = null;
     if (enable_vulkan) {
     const spirv_msm_g1_br = b.addSystemCommand(&.{
         "glslangValidator", "-V", "--target-env", "vulkan1.2",
@@ -129,25 +136,13 @@ pub fn build(b: *std.Build) void {
     spirv_msm_g2_wr.addArg("-o");
     const spirv_msm_g2_wr_out = spirv_msm_g2_wr.addOutputFileArg("msm_g2_v6_window_reduce.spv");
 
-    const write_spirv = b.addWriteFiles();
-    const spirv_msm_g1_br_spv = write_spirv.addCopyFile(spirv_msm_g1_br_out, "msm_g1_v5_bucket_reduce.spv");
-    const spirv_msm_g1_wr_spv = write_spirv.addCopyFile(spirv_msm_g1_wr_out, "msm_g1_v5_window_reduce.spv");
-    const spirv_msm_g2_br_spv = write_spirv.addCopyFile(spirv_msm_g2_br_out, "msm_g2_v6_bucket_reduce.spv");
-    const spirv_msm_g2_wr_spv = write_spirv.addCopyFile(spirv_msm_g2_wr_out, "msm_g2_v6_window_reduce.spv");
-    const spirv_zig = write_spirv.add("spirv.zig",
-        \\pub const MSM_G1_V5_BUCKET_REDUCE = @embedFile("msm_g1_v5_bucket_reduce.spv");
-        \\pub const MSM_G1_V5_WINDOW_REDUCE = @embedFile("msm_g1_v5_window_reduce.spv");
-        \\pub const MSM_G2_V6_BUCKET_REDUCE = @embedFile("msm_g2_v6_bucket_reduce.spv");
-        \\pub const MSM_G2_V6_WINDOW_REDUCE = @embedFile("msm_g2_v6_window_reduce.spv");
-        \\
-    );
-    spirv_module = b.addModule("spirv", .{
-        .root_source_file = spirv_zig,
-    });
-    spirv_module.?.addAnonymousImport("msm_g1_v5_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g1_br_spv });
-    spirv_module.?.addAnonymousImport("msm_g1_v5_window_reduce.spv", .{ .root_source_file = spirv_msm_g1_wr_spv });
-    spirv_module.?.addAnonymousImport("msm_g2_v6_bucket_reduce.spv", .{ .root_source_file = spirv_msm_g2_br_spv });
-    spirv_module.?.addAnonymousImport("msm_g2_v6_window_reduce.spv", .{ .root_source_file = spirv_msm_g2_wr_spv });
+    spirv_blobs = .{
+        .g1_bucket = spirv_msm_g1_br_out,
+        .g1_window = spirv_msm_g1_wr_out,
+        .g2_bucket = spirv_msm_g2_br_out,
+        .g2_window = spirv_msm_g2_wr_out,
+    };
+    spirv_module = spirvModule(b, target, spirv_blobs.?);
     }
 
     const testdata_module = b.addModule("testdata", .{
@@ -183,91 +178,80 @@ pub fn build(b: *std.Build) void {
         gpu_module.addImport("metal_shader", msm);
     }
 
+    const fast_backend: ?Backend = if (fast_target) |ft| blk: {
+        const fast_c = b.addTranslateC(.{
+            .root_source_file = b.path("include/host.h"),
+            .target = ft,
+            .optimize = optimize,
+        });
+        break :blk makeBackend(
+            b,
+            ft,
+            optimize,
+            fast_c.createModule(),
+            enable_vulkan,
+            vulkan_include,
+            molten_vk_include,
+            is_macos,
+            spirv_blobs,
+            metal_shader_module,
+        );
+    } else null;
+
+    const host_link: HostLink = .{
+        .is_macos = is_macos,
+        .is_native = is_native,
+        .enable_vulkan = enable_vulkan,
+        .molten_vk_lib = molten_vk_lib,
+    };
+
+    if (fast_backend) |fast| {
+        const fast_mod = b.createModule(.{
+            .root_source_file = b.path("src/fast_root.zig"),
+            .target = fast.target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "cpu", .module = fast.cpu },
+                .{ .name = "gpu", .module = fast.gpu },
+            },
+        });
+        fast_mod.link_libc = true;
+        fast_mod.addImport("c", fast.c);
+        isaOptions(b, fast_mod, false);
+        applyHostLink(fast_mod, host_link);
+        fast_mod.addRPathSpecial("$ORIGIN");
+        const fast_lib = b.addLibrary(.{
+            .name = "groth16_fast",
+            .linkage = .dynamic,
+            .root_module = fast_mod,
+        });
+        b.installArtifact(fast_lib);
+    }
+
     // --- Static Library: libgroth16.a ---
     const lib = b.addLibrary(.{
         .name = "groth16",
         .linkage = .static,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "cpu", .module = cpu_module },
-                .{ .name = "gpu", .module = gpu_module },
-            },
-        }),
+        .root_module = libIsaModule(b, target, optimize, simd_dispatch, cpu_module, gpu_module, c_module, host_link),
     });
-
-    lib.root_module.link_libc = true;
-    lib.root_module.addImport("c", c_module);
-
-    if (is_macos and is_native) {
-        lib.root_module.linkFramework("Foundation", .{});
-        lib.root_module.linkFramework("Metal", .{});
-        lib.root_module.linkFramework("QuartzCore", .{});
-        linkVulkan(lib.root_module, enable_vulkan, is_macos, molten_vk_lib);
-    } else if (!is_macos) {
-        lib.root_module.linkSystemLibrary("pthread", .{});
-    }
-
     b.installArtifact(lib);
 
     // --- Dynamic Library: libgroth16.dylib / .so / .dll ---
     const dylib = b.addLibrary(.{
         .name = "groth16",
         .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "cpu", .module = cpu_module },
-                .{ .name = "gpu", .module = gpu_module },
-            },
-        }),
+        .root_module = libIsaModule(b, target, optimize, simd_dispatch, cpu_module, gpu_module, c_module, host_link),
     });
-
-    dylib.root_module.link_libc = true;
-    dylib.root_module.addImport("c", c_module);
-
-    if (is_macos and is_native) {
-        dylib.root_module.linkFramework("Foundation", .{});
-        dylib.root_module.linkFramework("Metal", .{});
-        dylib.root_module.linkFramework("QuartzCore", .{});
-        linkVulkan(dylib.root_module, enable_vulkan, is_macos, molten_vk_lib);
-    } else if (!is_macos) {
-        dylib.root_module.linkSystemLibrary("pthread", .{});
-    }
-
+    if (simd_dispatch) dylib.root_module.addRPathSpecial("$ORIGIN");
     b.installArtifact(dylib);
     b.installFile("include/groth16.h", "include/groth16.h");
 
     // --- Executable: prover CLI ---
     const exe = b.addExecutable(.{
         .name = "prover",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "cpu", .module = cpu_module },
-                .{ .name = "gpu", .module = gpu_module },
-            },
-        }),
+        .root_module = cliModule(b, target, optimize, simd_dispatch, cpu_module, gpu_module, c_module, host_link),
     });
-
-    exe.root_module.link_libc = true;
-    exe.root_module.addImport("c", c_module);
-
-    if (is_macos and is_native) {
-        exe.root_module.linkFramework("Foundation", .{});
-        exe.root_module.linkFramework("Metal", .{});
-        exe.root_module.linkFramework("QuartzCore", .{});
-        linkVulkan(exe.root_module, enable_vulkan, is_macos, molten_vk_lib);
-    } else if (!is_macos) {
-        exe.root_module.linkSystemLibrary("pthread", .{});
-    }
-
+    if (simd_dispatch) exe.root_module.addRPathSpecial("$ORIGIN/../lib");
     b.installArtifact(exe);
 
     const unit_tests = b.addTest(.{
@@ -1068,4 +1052,235 @@ pub fn build(b: *std.Build) void {
     ifftscale_large.root_module.link_libc = true;
     b.installArtifact(ifftscale_large);
     }
+}
+
+const SimdMode = enum { native, runtime };
+
+const HostLink = struct {
+    is_macos: bool,
+    is_native: bool,
+    enable_vulkan: bool,
+    molten_vk_lib: []const u8,
+};
+
+const Backend = struct {
+    target: std.Build.ResolvedTarget,
+    cpu: *std.Build.Module,
+    gpu: *std.Build.Module,
+    c: *std.Build.Module,
+};
+
+fn defaultSimdMode(target: std.Build.ResolvedTarget) SimdMode {
+    return if (isLinuxSimdHost(target)) .runtime else .native;
+}
+
+fn isLinuxSimdHost(target: std.Build.ResolvedTarget) bool {
+    if (target.result.os.tag != .linux) return false;
+    return switch (target.result.cpu.arch) {
+        .x86_64, .aarch64 => true,
+        else => false,
+    };
+}
+
+fn portableQuery(query: std.Target.Query) std.Target.Query {
+    var portable = query;
+    portable.cpu_model = .baseline;
+    portable.cpu_features_add = std.Target.Cpu.Feature.Set.empty;
+    portable.cpu_features_sub = std.Target.Cpu.Feature.Set.empty;
+    return portable;
+}
+
+fn fastQuery(requested: std.Build.ResolvedTarget) std.Target.Query {
+    var query = requested.query;
+    query.cpu_features_add = std.Target.Cpu.Feature.Set.empty;
+    query.cpu_features_sub = std.Target.Cpu.Feature.Set.empty;
+    switch (requested.result.cpu.arch) {
+        .x86_64 => {
+            query.cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 };
+        },
+        .aarch64 => {
+            query.cpu_model = .baseline;
+            query.cpu_features_add.addFeature(@as(std.Target.Cpu.Feature.Set.Index, @intCast(@intFromEnum(std.Target.aarch64.Feature.neon))));
+            query.cpu_features_add.addFeature(@as(std.Target.Cpu.Feature.Set.Index, @intCast(@intFromEnum(std.Target.aarch64.Feature.lse))));
+            query.cpu_features_add.addFeature(@as(std.Target.Cpu.Feature.Set.Index, @intCast(@intFromEnum(std.Target.aarch64.Feature.crc))));
+            query.cpu_features_add.addFeature(@as(std.Target.Cpu.Feature.Set.Index, @intCast(@intFromEnum(std.Target.aarch64.Feature.dotprod))));
+        },
+        else => {},
+    }
+    return query;
+}
+
+fn applyHostLink(module: *std.Build.Module, host: HostLink) void {
+    if (host.is_macos and host.is_native) {
+        module.linkFramework("Foundation", .{});
+        module.linkFramework("Metal", .{});
+        module.linkFramework("QuartzCore", .{});
+        linkVulkan(module, host.enable_vulkan, host.is_macos, host.molten_vk_lib);
+    } else if (!host.is_macos) {
+        module.linkSystemLibrary("pthread", .{});
+    }
+}
+
+fn isaOptions(b: *std.Build, module: *std.Build.Module, dispatch: bool) void {
+    const opts = b.addOptions();
+    opts.addOption(bool, "dispatch", dispatch);
+    module.addOptions("isa_options", opts);
+}
+
+fn libIsaModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    dispatch: bool,
+    cpu_module: *std.Build.Module,
+    gpu_module: *std.Build.Module,
+    c_module: *std.Build.Module,
+    host: HostLink,
+) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "cpu", .module = cpu_module },
+            .{ .name = "gpu", .module = gpu_module },
+        },
+    });
+    module.link_libc = true;
+    module.addImport("c", c_module);
+    isaOptions(b, module, dispatch);
+    applyHostLink(module, host);
+    return module;
+}
+
+fn cliModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    dispatch: bool,
+    cpu_module: *std.Build.Module,
+    gpu_module: *std.Build.Module,
+    c_module: *std.Build.Module,
+    host: HostLink,
+) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "cpu", .module = cpu_module },
+            .{ .name = "gpu", .module = gpu_module },
+        },
+    });
+    module.link_libc = true;
+    module.addImport("c", c_module);
+    isaOptions(b, module, dispatch);
+    applyHostLink(module, host);
+    return module;
+}
+
+const SpirvBlobs = struct {
+    g1_bucket: std.Build.LazyPath,
+    g1_window: std.Build.LazyPath,
+    g2_bucket: std.Build.LazyPath,
+    g2_window: std.Build.LazyPath,
+};
+
+fn spirvModule(b: *std.Build, target: std.Build.ResolvedTarget, blobs: SpirvBlobs) *std.Build.Module {
+    const write_spirv = b.addWriteFiles();
+    const g1_bucket = write_spirv.addCopyFile(blobs.g1_bucket, "msm_g1_v5_bucket_reduce.spv");
+    const g1_window = write_spirv.addCopyFile(blobs.g1_window, "msm_g1_v5_window_reduce.spv");
+    const g2_bucket = write_spirv.addCopyFile(blobs.g2_bucket, "msm_g2_v6_bucket_reduce.spv");
+    const g2_window = write_spirv.addCopyFile(blobs.g2_window, "msm_g2_v6_window_reduce.spv");
+    const spirv_zig = write_spirv.add("spirv.zig",
+        \\pub const MSM_G1_V5_BUCKET_REDUCE = @embedFile("msm_g1_v5_bucket_reduce.spv");
+        \\pub const MSM_G1_V5_WINDOW_REDUCE = @embedFile("msm_g1_v5_window_reduce.spv");
+        \\pub const MSM_G2_V6_BUCKET_REDUCE = @embedFile("msm_g2_v6_bucket_reduce.spv");
+        \\pub const MSM_G2_V6_WINDOW_REDUCE = @embedFile("msm_g2_v6_window_reduce.spv");
+        \\
+    );
+    const module = b.createModule(.{
+        .root_source_file = spirv_zig,
+        .target = target,
+    });
+    module.addAnonymousImport("msm_g1_v5_bucket_reduce.spv", .{ .root_source_file = g1_bucket });
+    module.addAnonymousImport("msm_g1_v5_window_reduce.spv", .{ .root_source_file = g1_window });
+    module.addAnonymousImport("msm_g2_v6_bucket_reduce.spv", .{ .root_source_file = g2_bucket });
+    module.addAnonymousImport("msm_g2_v6_window_reduce.spv", .{ .root_source_file = g2_window });
+    return module;
+}
+
+fn makeBackend(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    c_module: *std.Build.Module,
+    enable_vulkan: bool,
+    vulkan_include: ?[]const u8,
+    molten_vk_include: []const u8,
+    is_macos: bool,
+    spirv_blobs: ?SpirvBlobs,
+    metal_shader_module: ?*std.Build.Module,
+) Backend {
+    const testdata_module = b.createModule(.{
+        .root_source_file = b.path("testdata/testdata.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const e_jerk_gpu_module = b.dependency("e_jerk_gpu", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("e_jerk_gpu");
+    const zig_metal_dep = b.dependency("zig_metal", .{});
+    const zig_metal_module = b.createModule(.{
+        .root_source_file = zig_metal_dep.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const cpu_module = b.createModule(.{
+        .root_source_file = b.path("src/cpu.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "testdata", .module = testdata_module },
+        },
+    });
+    cpu_module.link_libc = true;
+    cpu_module.addImport("c", c_module);
+
+    const gpu_module = b.createModule(.{
+        .root_source_file = b.path("src/gpu/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "c", .module = c_module },
+            .{ .name = "e_jerk_gpu", .module = e_jerk_gpu_module },
+            .{ .name = "zig-metal", .module = zig_metal_module },
+            .{ .name = "cpu", .module = cpu_module },
+        },
+    });
+    const gpu_options = b.addOptions();
+    gpu_options.addOption(bool, "vulkan", enable_vulkan);
+    gpu_module.addOptions("build_options", gpu_options);
+    if (enable_vulkan) {
+        const vk_include = vulkan_include orelse if (is_macos) molten_vk_include else "/usr/include";
+        const vk_c = b.addTranslateC(.{
+            .root_source_file = b.path("include/vulkan_import.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        vk_c.addIncludePath(.{ .cwd_relative = vk_include });
+        gpu_module.addImport("vk", vk_c.createModule());
+        gpu_module.addImport("spirv", spirvModule(b, target, spirv_blobs.?));
+        gpu_module.addIncludePath(.{ .cwd_relative = vk_include });
+    }
+    if (metal_shader_module) |msm| {
+        gpu_module.addImport("metal_shader", msm);
+    }
+    return .{
+        .target = target,
+        .cpu = cpu_module,
+        .gpu = gpu_module,
+        .c = c_module,
+    };
 }

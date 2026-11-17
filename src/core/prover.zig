@@ -183,25 +183,7 @@ pub fn calculateH(
 
     // 2. Shift coefficients to coset domain by multiplying with g^i
     // where g is the 2n-th primitive root of unity
-    const g = switch (domain_size) {
-        1024 => fft.FR_OMEGA_2048,
-        2048 => fft.FR_OMEGA_4096,
-        4096 => fft.FR_OMEGA_8192,
-        8192 => fft.FR_OMEGA_16384,
-        16384 => fft.FR_OMEGA_32768,
-        32768 => fft.FR_OMEGA_65536,
-        65536 => fft.FR_OMEGA_131072,
-        131072 => fft.FR_OMEGA_262144,
-        262144 => fft.FR_OMEGA_524288,
-        524288 => fft.FR_OMEGA_1048576,
-        1048576 => fft.FR_OMEGA_2097152,
-        2097152 => fft.FR_OMEGA_4194304,
-        4194304 => fft.FR_OMEGA_8388608,
-        else => {
-            std.debug.assert(@popCount(domain_size) == 1);
-            std.debug.panic("Unsupported domain size for coset shift: {d}", .{domain_size});
-        },
-    };
+    const g = fft.cosetGenerator(domain_size);
     fft.shiftCoefficients(a, domain_size, g);
     fft.shiftCoefficients(b, domain_size, g);
     fft.shiftCoefficients(c, domain_size, g);
